@@ -40,4 +40,4 @@ pub use array::Array;
 pub use device::{default_device, set_default_device, Device};
 pub use dtype::DType;
 pub use shape::Shape;
-pub use trace::{grad, jit};
+pub use trace::{grad, jit, vmap};

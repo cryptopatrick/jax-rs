@@ -9,6 +9,7 @@ pub mod interpreter;
 pub mod ir;
 pub mod jit;
 pub mod tracer;
+pub mod vmap;
 
 pub use grad::{grad, JVPEngine, VJPEngine};
 pub use interpreter::Interpreter;
@@ -18,3 +19,4 @@ pub use tracer::{
     enter_trace, exit_trace, is_tracing, trace_binary, trace_reduce, trace_unary, with_trace,
     TraceContext,
 };
+pub use vmap::{vmap, vmap2, VmapConfig};
