@@ -4,11 +4,13 @@
 //! building an intermediate representation (IR), and enabling
 //! transformations like JIT, grad, and vmap.
 
+pub mod grad;
 pub mod interpreter;
 pub mod ir;
 pub mod jit;
 pub mod tracer;
 
+pub use grad::{grad, JVPEngine, VJPEngine};
 pub use interpreter::Interpreter;
 pub use ir::{IRGraph, IRNode, Primitive};
 pub use jit::jit;

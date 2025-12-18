@@ -99,6 +99,14 @@ impl Array {
         reduce_all(self, 0.0, |acc, x| acc + x)
     }
 
+    /// Sum of all elements, returned as a scalar Array.
+    ///
+    /// This is a convenience method for autodiff that wraps `sum_all()`.
+    pub fn sum_all_array(&self) -> Array {
+        let val = self.sum_all();
+        Array::from_vec(vec![val], crate::Shape::scalar())
+    }
+
     /// Sum along a specific axis.
     ///
     /// # Examples
