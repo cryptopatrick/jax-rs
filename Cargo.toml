@@ -5,12 +5,12 @@ edition = "2024"
 authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
 
 ###############################################################################
-description = "JAX JAX in Rust – an ML library for the web, running on WebGPU & Wasm"
+description = "JAX in Rust - an ML library for the web, running on WebGPU & Wasm"
 documentation = "https://docs.rs/jax-rs"
 homepage = "https://github.com/cryptopatrick/jax-rs"
 repository = "https://github.com/cryptopatrick/jax-rs"
 readme = "README.md"
-keywords = ["<KEYWORD1>", "<KEYWORD2>" ]
+keywords = ["ml", "machine learning" ]
 license = "MIT"
 autotests = false
 
