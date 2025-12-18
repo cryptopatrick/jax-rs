@@ -16,7 +16,7 @@ autotests = false
 
 ###############################################################################
 [lib]
-name = "jax-rs"
+#name = "jax-rs"
 path = "src/lib.rs"
 
 [[test]]
