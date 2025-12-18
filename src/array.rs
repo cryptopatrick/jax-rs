@@ -205,6 +205,62 @@ impl Array {
             offset: 0,
         }
     }
+
+    /// Remove axes of length one from the array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::zeros(Shape::new(vec![1, 3, 1, 4]), jax_rs::DType::Float32);
+    /// let b = a.squeeze();
+    /// assert_eq!(b.shape().as_slice(), &[3, 4]);
+    /// ```
+    pub fn squeeze(&self) -> Self {
+        let new_dims: Vec<usize> = self
+            .shape
+            .as_slice()
+            .iter()
+            .filter(|&&dim| dim != 1)
+            .copied()
+            .collect();
+
+        let new_shape = if new_dims.is_empty() {
+            Shape::scalar()
+        } else {
+            Shape::new(new_dims)
+        };
+
+        self.reshape(new_shape)
+    }
+
+    /// Expand the shape of an array by inserting a new axis.
+    ///
+    /// # Arguments
+    ///
+    /// * `axis` - Position where new axis is placed
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.expand_dims(0);
+    /// assert_eq!(b.shape().as_slice(), &[1, 3]);
+    /// let c = a.expand_dims(1);
+    /// assert_eq!(c.shape().as_slice(), &[3, 1]);
+    /// ```
+    pub fn expand_dims(&self, axis: usize) -> Self {
+        let mut new_dims = self.shape.as_slice().to_vec();
+        assert!(
+            axis <= new_dims.len(),
+            "Axis {} out of bounds for array with {} dimensions",
+            axis,
+            new_dims.len()
+        );
+        new_dims.insert(axis, 1);
+        self.reshape(Shape::new(new_dims))
+    }
 }
 
 impl fmt::Display for Array {

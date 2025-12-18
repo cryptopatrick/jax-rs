@@ -63,7 +63,7 @@ where
 
 /// Convert a flat index in the result array to an index in the source array,
 /// accounting for broadcasting.
-fn broadcast_index(flat_idx: usize, result_shape: &Shape, src_shape: &Shape) -> usize {
+pub(crate) fn broadcast_index(flat_idx: usize, result_shape: &Shape, src_shape: &Shape) -> usize {
     let result_dims = result_shape.as_slice();
     let src_dims = src_shape.as_slice();
 
