@@ -1,0 +1,27 @@
+[package]
+name = "jax-rs"
+version = "0.1.0"
+edition = "2024"
+authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
+
+###############################################################################
+description = "JAX JAX in Rust – an ML library for the web, running on WebGPU & Wasm"
+documentation = "https://docs.rs/jax-rs"
+homepage = "https://github.com/cryptopatrick/jax-rs"
+repository = "https://github.com/cryptopatrick/jax-rs"
+readme = "README.md"
+keywords = ["<KEYWORD1>", "<KEYWORD2>" ]
+license = "MIT"
+autotests = false
+
+###############################################################################
+[lib]
+name = "jax-rs"
+path = "src/lib.rs"
+
+[[test]]
+name = "tests"
+path = "tests/test.rs"
+
+###############################################################################
+[dependencies]
