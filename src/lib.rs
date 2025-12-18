@@ -33,9 +33,11 @@ mod device;
 mod dtype;
 mod ops;
 mod shape;
+pub mod trace;
 
 // Public exports
 pub use array::Array;
 pub use device::{default_device, set_default_device, Device};
 pub use dtype::DType;
 pub use shape::Shape;
+pub use trace::jit;
