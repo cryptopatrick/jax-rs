@@ -121,6 +121,17 @@ impl Array {
         }
     }
 
+    /// Create an array from a buffer and shape (internal use).
+    pub(crate) fn from_buffer(buffer: Buffer, shape: Shape) -> Self {
+        let strides = shape.default_strides();
+        Self {
+            buffer,
+            shape,
+            strides,
+            offset: 0,
+        }
+    }
+
     /// Get the shape of the array.
     #[inline]
     pub fn shape(&self) -> &Shape {

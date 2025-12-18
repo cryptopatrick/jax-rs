@@ -31,6 +31,7 @@ mod array;
 mod buffer;
 mod device;
 mod dtype;
+mod ops;
 mod shape;
 
 // Public exports

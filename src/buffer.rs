@@ -75,6 +75,7 @@ impl Buffer {
     /// # Panics
     ///
     /// Panics if dtype is not Int32.
+    #[allow(dead_code)]
     pub fn from_i32(data: Vec<i32>, device: Device) -> Self {
         let dtype = DType::Int32;
         let len = data.len();
@@ -104,12 +105,14 @@ impl Buffer {
 
     /// Get the number of elements in the buffer.
     #[inline]
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.inner.len
     }
 
     /// Check if the buffer is empty.
     #[inline]
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.inner.len == 0
     }
@@ -146,6 +149,7 @@ impl Buffer {
     /// # Panics
     ///
     /// Panics if dtype is not Int32.
+    #[allow(dead_code)]
     pub fn as_i32_slice(&self) -> &[i32] {
         assert_eq!(self.inner.dtype, DType::Int32);
         unsafe {
@@ -162,6 +166,7 @@ impl Buffer {
     }
 
     /// Copy data to a Vec<i32>.
+    #[allow(dead_code)]
     pub fn to_i32_vec(&self) -> Vec<i32> {
         self.as_i32_slice().to_vec()
     }

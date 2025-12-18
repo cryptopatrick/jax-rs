@@ -169,7 +169,7 @@ mod tests {
         assert_eq!(shape.default_strides(), vec![1]);
 
         let shape = Shape::scalar();
-        assert_eq!(shape.default_strides(), vec![]);
+        assert_eq!(shape.default_strides(), Vec::<usize>::new());
     }
 
     #[test]

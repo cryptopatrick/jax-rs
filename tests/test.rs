@@ -1,2 +1,1 @@
-extern crate jax-rs;
-use jax-rs::*;
+// Integration tests would go here
