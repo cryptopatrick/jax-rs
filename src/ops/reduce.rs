@@ -443,6 +443,164 @@ impl Array {
             data[lower] * (1.0 - weight) + data[upper] * weight
         }
     }
+
+    /// Cumulative sum of array elements.
+    ///
+    /// Returns an array of the same shape with cumulative sums.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let cumsum = a.cumsum();
+    /// assert_eq!(cumsum.to_vec(), vec![1.0, 3.0, 6.0, 10.0]);
+    /// ```
+    pub fn cumsum(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut sum = 0.0;
+
+        for &val in data.iter() {
+            sum += val;
+            result.push(sum);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Cumulative product of array elements.
+    ///
+    /// Returns an array of the same shape with cumulative products.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let cumprod = a.cumprod();
+    /// assert_eq!(cumprod.to_vec(), vec![1.0, 2.0, 6.0, 24.0]);
+    /// ```
+    pub fn cumprod(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut prod = 1.0;
+
+        for &val in data.iter() {
+            prod *= val;
+            result.push(prod);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Cumulative maximum of array elements.
+    ///
+    /// Returns an array of the same shape with cumulative maximums.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+    /// let cummax = a.cummax();
+    /// assert_eq!(cummax.to_vec(), vec![3.0, 3.0, 4.0, 4.0]);
+    /// ```
+    pub fn cummax(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut max = f32::NEG_INFINITY;
+
+        for &val in data.iter() {
+            max = max.max(val);
+            result.push(max);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Cumulative minimum of array elements.
+    ///
+    /// Returns an array of the same shape with cumulative minimums.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+    /// let cummin = a.cummin();
+    /// assert_eq!(cummin.to_vec(), vec![3.0, 1.0, 1.0, 1.0]);
+    /// ```
+    pub fn cummin(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut min = f32::INFINITY;
+
+        for &val in data.iter() {
+            min = min.min(val);
+            result.push(min);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Calculate the discrete difference along the array.
+    ///
+    /// Computes the difference between consecutive elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 3.0, 6.0, 10.0], Shape::new(vec![4]));
+    /// let diff = a.diff();
+    /// assert_eq!(diff.to_vec(), vec![2.0, 3.0, 4.0]);
+    /// ```
+    pub fn diff(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        assert!(data.len() > 0, "Array must have at least 1 element");
+
+        if data.len() == 1 {
+            return Array::from_vec(vec![], Shape::new(vec![0]));
+        }
+
+        let mut result = Vec::with_capacity(data.len() - 1);
+        for i in 1..data.len() {
+            result.push(data[i] - data[i - 1]);
+        }
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Calculate the n-th discrete difference.
+    ///
+    /// Recursively applies diff n times.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let diff2 = a.diff_n(2);
+    /// assert_eq!(diff2.to_vec(), vec![0.0, 0.0, 0.0]);
+    /// ```
+    pub fn diff_n(&self, n: usize) -> Array {
+        if n == 0 {
+            return self.clone();
+        }
+
+        let mut result = self.diff();
+        for _ in 1..n {
+            result = result.diff();
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -547,5 +705,55 @@ mod tests {
         let sum_axis1 = a.sum(1);
         assert_eq!(sum_axis1.shape().as_slice(), &[2, 2]);
         assert_eq!(sum_axis1.to_vec(), vec![4.0, 6.0, 12.0, 14.0]);
+    }
+
+    #[test]
+    fn test_cumsum() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let cumsum = a.cumsum();
+        assert_eq!(cumsum.to_vec(), vec![1.0, 3.0, 6.0, 10.0]);
+    }
+
+    #[test]
+    fn test_cumprod() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let cumprod = a.cumprod();
+        assert_eq!(cumprod.to_vec(), vec![1.0, 2.0, 6.0, 24.0]);
+    }
+
+    #[test]
+    fn test_cummax() {
+        let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+        let cummax = a.cummax();
+        assert_eq!(cummax.to_vec(), vec![3.0, 3.0, 4.0, 4.0]);
+    }
+
+    #[test]
+    fn test_cummin() {
+        let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+        let cummin = a.cummin();
+        assert_eq!(cummin.to_vec(), vec![3.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_diff() {
+        let a = Array::from_vec(vec![1.0, 3.0, 6.0, 10.0], Shape::new(vec![4]));
+        let diff = a.diff();
+        assert_eq!(diff.to_vec(), vec![2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_diff_n() {
+        // Linear sequence - second derivative should be 0
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            Shape::new(vec![5]),
+        );
+        let diff2 = a.diff_n(2);
+        assert_eq!(diff2.to_vec(), vec![0.0, 0.0, 0.0]);
+
+        // diff_n(0) should return the original array
+        let diff0 = a.diff_n(0);
+        assert_eq!(diff0.to_vec(), a.to_vec());
     }
 }
