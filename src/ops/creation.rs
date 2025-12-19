@@ -293,6 +293,163 @@ impl Array {
 
         Self::from_vec(data, Shape::new(vec![n, cols]))
     }
+
+    /// Create array with same shape as another, filled with zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape, DType};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::zeros_like(&a);
+    /// assert_eq!(b.to_vec(), vec![0.0, 0.0, 0.0]);
+    /// ```
+    pub fn zeros_like(other: &Array) -> Array {
+        Array::zeros(other.shape().clone(), other.dtype())
+    }
+
+    /// Create array with same shape as another, filled with ones.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape, DType};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::ones_like(&a);
+    /// assert_eq!(b.to_vec(), vec![1.0, 1.0, 1.0]);
+    /// ```
+    pub fn ones_like(other: &Array) -> Array {
+        Array::ones(other.shape().clone(), other.dtype())
+    }
+
+    /// Create array with same shape as another, filled with a constant value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape, DType};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::full_like(&a, 42.0);
+    /// assert_eq!(b.to_vec(), vec![42.0, 42.0, 42.0]);
+    /// ```
+    pub fn full_like(other: &Array, value: f32) -> Array {
+        Array::full(value, other.shape().clone(), other.dtype())
+    }
+
+    /// Repeat array along specified axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = a.repeat(3, 0);
+    /// assert_eq!(b.to_vec(), vec![1.0, 1.0, 1.0, 2.0, 2.0, 2.0]);
+    /// ```
+    pub fn repeat(&self, repeats: usize, axis: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(axis < self.ndim(), "Axis out of bounds");
+
+        let shape = self.shape().as_slice();
+        let data = self.to_vec();
+
+        // For 1D case
+        if self.ndim() == 1 {
+            let mut result = Vec::with_capacity(data.len() * repeats);
+            for &val in data.iter() {
+                for _ in 0..repeats {
+                    result.push(val);
+                }
+            }
+            return Array::from_vec(result, Shape::new(vec![shape[0] * repeats]));
+        }
+
+        // For higher dimensions, only support axis 0 for now
+        assert_eq!(axis, 0, "repeat only supports axis=0 for multi-dimensional arrays");
+
+        let slice_size = data.len() / shape[0];
+        let mut result = Vec::with_capacity(data.len() * repeats);
+
+        for i in 0..shape[0] {
+            let start = i * slice_size;
+            let end = start + slice_size;
+            for _ in 0..repeats {
+                result.extend_from_slice(&data[start..end]);
+            }
+        }
+
+        let mut result_shape = shape.to_vec();
+        result_shape[axis] *= repeats;
+        Array::from_vec(result, Shape::new(result_shape))
+    }
+
+    /// Tile array by repeating it multiple times.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = a.tile(3);
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
+    /// ```
+    pub fn tile(&self, reps: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len() * reps);
+
+        for _ in 0..reps {
+            result.extend_from_slice(&data);
+        }
+
+        let shape = self.shape().as_slice();
+        let mut result_shape = shape.to_vec();
+        result_shape[0] *= reps;
+
+        Array::from_vec(result, Shape::new(result_shape))
+    }
+
+    /// Create coordinate matrices from coordinate vectors.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let y = Array::from_vec(vec![3.0, 4.0, 5.0], Shape::new(vec![3]));
+    /// let (xx, yy) = Array::meshgrid(&x, &y);
+    /// assert_eq!(xx.shape().as_slice(), &[3, 2]);
+    /// assert_eq!(yy.shape().as_slice(), &[3, 2]);
+    /// ```
+    pub fn meshgrid(x: &Array, y: &Array) -> (Array, Array) {
+        assert_eq!(x.ndim(), 1, "meshgrid requires 1D arrays");
+        assert_eq!(y.ndim(), 1, "meshgrid requires 1D arrays");
+
+        let x_data = x.to_vec();
+        let y_data = y.to_vec();
+        let nx = x_data.len();
+        let ny = y_data.len();
+
+        // Create XX: repeat x along rows
+        let mut xx_data = Vec::with_capacity(nx * ny);
+        for _ in 0..ny {
+            xx_data.extend_from_slice(&x_data);
+        }
+
+        // Create YY: repeat each y value nx times
+        let mut yy_data = Vec::with_capacity(nx * ny);
+        for &y_val in y_data.iter() {
+            for _ in 0..nx {
+                yy_data.push(y_val);
+            }
+        }
+
+        let xx = Array::from_vec(xx_data, Shape::new(vec![ny, nx]));
+        let yy = Array::from_vec(yy_data, Shape::new(vec![ny, nx]));
+
+        (xx, yy)
+    }
 }
 
 #[cfg(test)]
