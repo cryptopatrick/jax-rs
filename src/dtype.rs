@@ -133,7 +133,10 @@ mod tests {
             DType::promote(DType::Uint32, DType::Float32),
             DType::Float32
         );
-        assert_eq!(DType::promote(DType::Float32, DType::Float32), DType::Float32);
+        assert_eq!(
+            DType::promote(DType::Float32, DType::Float32),
+            DType::Float32
+        );
     }
 
     #[test]

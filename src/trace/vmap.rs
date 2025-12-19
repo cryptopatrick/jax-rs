@@ -82,7 +82,11 @@ where
 }
 
 /// Split an array into slices along a given axis.
-fn split_along_axis(arr: &Array, axis: usize, num_splits: usize) -> Vec<Array> {
+fn split_along_axis(
+    arr: &Array,
+    axis: usize,
+    num_splits: usize,
+) -> Vec<Array> {
     let shape = arr.shape().as_slice();
     assert!(axis < shape.len(), "Axis out of bounds");
     assert_eq!(
@@ -113,7 +117,8 @@ fn split_along_axis(arr: &Array, axis: usize, num_splits: usize) -> Vec<Array> {
             let start = i * chunk_size;
             let end = start + chunk_size;
             let chunk = data[start..end].to_vec();
-            let arr = Array::from_vec(chunk, Shape::new(remaining_shape.clone()));
+            let arr =
+                Array::from_vec(chunk, Shape::new(remaining_shape.clone()));
             splits.push(arr);
         }
     } else {
@@ -181,7 +186,8 @@ impl VmapConfig {
         move |x: &Array| {
             let batch_size = x.shape().as_slice()[self.in_axis];
             let inputs = split_along_axis(x, self.in_axis, batch_size);
-            let outputs: Vec<Array> = inputs.iter().map(|inp| f(inp)).collect();
+            let outputs: Vec<Array> =
+                inputs.iter().map(|inp| f(inp)).collect();
 
             if self.out_axis == 0 {
                 stack_along_axis(&outputs, self.out_axis)
@@ -216,10 +222,7 @@ mod tests {
 
         // Output should be [2, 3] with squared values
         assert_eq!(result.shape().as_slice(), &[2, 3]);
-        assert_eq!(
-            result.to_vec(),
-            vec![1.0, 4.0, 9.0, 16.0, 25.0, 36.0]
-        );
+        assert_eq!(result.to_vec(), vec![1.0, 4.0, 9.0, 16.0, 25.0, 36.0]);
     }
 
     #[test]
@@ -243,10 +246,7 @@ mod tests {
 
         // Output should be [2, 3]
         assert_eq!(result.shape().as_slice(), &[2, 3]);
-        assert_eq!(
-            result.to_vec(),
-            vec![11.0, 22.0, 33.0, 44.0, 55.0, 66.0]
-        );
+        assert_eq!(result.to_vec(), vec![11.0, 22.0, 33.0, 44.0, 55.0, 66.0]);
     }
 
     #[test]
@@ -257,7 +257,10 @@ mod tests {
         let vmap_sum = vmap(sum, 0);
 
         // Input: [3, 2] - batch of 3 vectors of length 2
-        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![3, 2]));
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![3, 2]),
+        );
 
         let result = vmap_sum(&x);
 
@@ -268,7 +271,10 @@ mod tests {
 
     #[test]
     fn test_split_along_axis() {
-        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![3, 2]));
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![3, 2]),
+        );
 
         let splits = split_along_axis(&x, 0, 3);
 
@@ -301,7 +307,10 @@ mod tests {
         let vmap_mul2 = vmap(mul2, 0);
 
         // Input: [2, 3]
-        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
 
         let result = vmap_mul2(&x);
 

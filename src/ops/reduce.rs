@@ -1,6 +1,6 @@
 //! Reduction operations on arrays.
 
-use crate::{buffer::Buffer, Array, Device, DType, Shape};
+use crate::{buffer::Buffer, Array, DType, Device, Shape};
 
 /// Reduce over all elements with a binary operation.
 fn reduce_all<F>(input: &Array, init: f32, f: F) -> f32
@@ -172,7 +172,10 @@ mod tests {
     #[test]
     fn test_sum_axis() {
         // 2x3 array: [[1, 2, 3], [4, 5, 6]]
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
 
         // Sum along axis 0 (collapse rows): [5, 7, 9]
         let sum_axis0 = a.sum(0);
@@ -193,7 +196,10 @@ mod tests {
 
     #[test]
     fn test_mean_axis() {
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
 
         let mean_axis0 = a.mean(0);
         assert_eq!(mean_axis0.to_vec(), vec![2.5, 3.5, 4.5]);
@@ -210,7 +216,10 @@ mod tests {
 
     #[test]
     fn test_max_axis() {
-        let a = Array::from_vec(vec![1.0, 5.0, 3.0, 2.0, 4.0, 6.0], Shape::new(vec![2, 3]));
+        let a = Array::from_vec(
+            vec![1.0, 5.0, 3.0, 2.0, 4.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
 
         let max_axis0 = a.max(0);
         assert_eq!(max_axis0.to_vec(), vec![2.0, 5.0, 6.0]);
@@ -227,7 +236,10 @@ mod tests {
 
     #[test]
     fn test_min_axis() {
-        let a = Array::from_vec(vec![3.0, 5.0, 2.0, 1.0, 4.0, 6.0], Shape::new(vec![2, 3]));
+        let a = Array::from_vec(
+            vec![3.0, 5.0, 2.0, 1.0, 4.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
 
         let min_axis0 = a.min(0);
         assert_eq!(min_axis0.to_vec(), vec![1.0, 4.0, 2.0]);

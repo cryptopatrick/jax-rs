@@ -1,6 +1,6 @@
 //! Core Array type for n-dimensional numeric arrays.
 
-use crate::{buffer::Buffer, Device, DType, Shape};
+use crate::{buffer::Buffer, DType, Device, Shape};
 use std::fmt;
 
 /// A multidimensional numeric array.
@@ -52,12 +52,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::zeros(size, dtype, device);
         let strides = shape.default_strides();
-        Self {
-            buffer,
-            shape,
-            strides,
-            offset: 0,
-        }
+        Self { buffer, shape, strides, offset: 0 }
     }
 
     /// Create a new array filled with ones.
@@ -67,12 +62,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::filled(1.0, size, dtype, device);
         let strides = shape.default_strides();
-        Self {
-            buffer,
-            shape,
-            strides,
-            offset: 0,
-        }
+        Self { buffer, shape, strides, offset: 0 }
     }
 
     /// Create a new array filled with a specific value.
@@ -82,12 +72,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::filled(value, size, dtype, device);
         let strides = shape.default_strides();
-        Self {
-            buffer,
-            shape,
-            strides,
-            offset: 0,
-        }
+        Self { buffer, shape, strides, offset: 0 }
     }
 
     /// Create an array from a flat Vec<f32> and shape.
@@ -113,23 +98,13 @@ impl Array {
         let device = crate::default_device();
         let buffer = Buffer::from_f32(data, device);
         let strides = shape.default_strides();
-        Self {
-            buffer,
-            shape,
-            strides,
-            offset: 0,
-        }
+        Self { buffer, shape, strides, offset: 0 }
     }
 
     /// Create an array from a buffer and shape (internal use).
     pub(crate) fn from_buffer(buffer: Buffer, shape: Shape) -> Self {
         let strides = shape.default_strides();
-        Self {
-            buffer,
-            shape,
-            strides,
-            offset: 0,
-        }
+        Self { buffer, shape, strides, offset: 0 }
     }
 
     /// Get the shape of the array.
@@ -265,12 +240,7 @@ impl Array {
 
 impl fmt::Display for Array {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Array:{}{}",
-            self.dtype(),
-            self.shape()
-        )
+        write!(f, "Array:{}{}", self.dtype(), self.shape())
     }
 }
 

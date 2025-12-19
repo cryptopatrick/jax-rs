@@ -1,6 +1,6 @@
 //! Buffer abstraction for array data storage.
 
-use crate::{Device, DType};
+use crate::{DType, Device};
 use std::sync::Arc;
 
 /// Raw data buffer for array storage.
@@ -35,14 +35,7 @@ impl Buffer {
     pub fn zeros(len: usize, dtype: DType, device: Device) -> Self {
         let byte_len = len * dtype.byte_width();
         let data = vec![0u8; byte_len];
-        Self {
-            inner: Arc::new(BufferInner {
-                data,
-                device,
-                dtype,
-                len,
-            }),
-        }
+        Self { inner: Arc::new(BufferInner { data, device, dtype, len }) }
     }
 
     /// Create a new buffer from f32 data.
@@ -97,7 +90,12 @@ impl Buffer {
     }
 
     /// Create a new buffer filled with a specific value.
-    pub fn filled(value: f32, len: usize, dtype: DType, device: Device) -> Self {
+    pub fn filled(
+        value: f32,
+        len: usize,
+        dtype: DType,
+        device: Device,
+    ) -> Self {
         assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
         let data = vec![value; len];
         Self::from_f32(data, device)

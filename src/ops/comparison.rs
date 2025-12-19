@@ -1,6 +1,6 @@
 //! Comparison operations on arrays.
 
-use crate::{buffer::Buffer, Array, Device, DType};
+use crate::{buffer::Buffer, Array, DType, Device};
 
 #[cfg(test)]
 use crate::Shape;
@@ -36,8 +36,16 @@ where
         let size = result_shape.size();
         (0..size)
             .map(|i| {
-                let lhs_idx = crate::ops::binary::broadcast_index(i, &result_shape, lhs.shape());
-                let rhs_idx = crate::ops::binary::broadcast_index(i, &result_shape, rhs.shape());
+                let lhs_idx = crate::ops::binary::broadcast_index(
+                    i,
+                    &result_shape,
+                    lhs.shape(),
+                );
+                let rhs_idx = crate::ops::binary::broadcast_index(
+                    i,
+                    &result_shape,
+                    rhs.shape(),
+                );
                 if f(lhs_data[lhs_idx], rhs_data[rhs_idx]) {
                     1.0
                 } else {
@@ -97,7 +105,6 @@ impl Array {
         compare_op(self, other, |a, b| a != b)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

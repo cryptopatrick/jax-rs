@@ -29,7 +29,8 @@ impl Array {
             return Array::zeros(Shape::new(vec![0]), dtype);
         }
 
-        let data: Vec<f32> = (0..size).map(|i| start + (i as f32) * step).collect();
+        let data: Vec<f32> =
+            (0..size).map(|i| start + (i as f32) * step).collect();
 
         let device = crate::default_device();
         let buffer = Buffer::from_f32(data, device);
@@ -54,7 +55,13 @@ impl Array {
     /// let a = Array::linspace(0.0, 1.0, 5, true, DType::Float32);
     /// assert_eq!(a.to_vec(), vec![0.0, 0.25, 0.5, 0.75, 1.0]);
     /// ```
-    pub fn linspace(start: f32, stop: f32, num: usize, endpoint: bool, dtype: DType) -> Self {
+    pub fn linspace(
+        start: f32,
+        stop: f32,
+        num: usize,
+        endpoint: bool,
+        dtype: DType,
+    ) -> Self {
         assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
 
         if num == 0 {
@@ -72,9 +79,8 @@ impl Array {
         let delta = stop - start;
         let denom = if endpoint { num - 1 } else { num } as f32;
 
-        let data: Vec<f32> = (0..num)
-            .map(|i| start + (i as f32) * delta / denom)
-            .collect();
+        let data: Vec<f32> =
+            (0..num).map(|i| start + (i as f32) * delta / denom).collect();
 
         let device = crate::default_device();
         let buffer = Buffer::from_f32(data, device);

@@ -37,16 +37,13 @@ where
 {
     /// Create a new JIT-compiled function.
     pub fn new(name: String, function: F) -> Self {
-        Self {
-            function,
-            cache: Arc::new(Mutex::new(HashMap::new())),
-            name,
-        }
+        Self { function, cache: Arc::new(Mutex::new(HashMap::new())), name }
     }
 
     /// Execute the function, using cached compilation if available.
     pub fn call(&self, inputs: &[Array]) -> Vec<Array> {
-        let shapes: Vec<Shape> = inputs.iter().map(|a| a.shape().clone()).collect();
+        let shapes: Vec<Shape> =
+            inputs.iter().map(|a| a.shape().clone()).collect();
 
         // Check cache
         {
@@ -120,9 +117,11 @@ mod tests {
 
     #[test]
     fn test_jit_basic() {
-        let f = jit("test_add", |inputs: &[Array]| {
-            vec![inputs[0].add(&inputs[1])]
-        });
+        let f =
+            jit(
+                "test_add",
+                |inputs: &[Array]| vec![inputs[0].add(&inputs[1])],
+            );
 
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
         let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
@@ -133,9 +132,11 @@ mod tests {
 
     #[test]
     fn test_jit_caching() {
-        let f = jit("test_mul", |inputs: &[Array]| {
-            vec![inputs[0].mul(&inputs[1])]
-        });
+        let f =
+            jit(
+                "test_mul",
+                |inputs: &[Array]| vec![inputs[0].mul(&inputs[1])],
+            );
 
         let a = Array::from_vec(vec![2.0, 3.0], Shape::new(vec![2]));
         let b = Array::from_vec(vec![4.0, 5.0], Shape::new(vec![2]));
@@ -174,7 +175,8 @@ mod tests {
         // Manually build an IR graph: add(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![3]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
 
         let graph = crate::trace::IRGraph::new(
             "manual_add".to_string(),

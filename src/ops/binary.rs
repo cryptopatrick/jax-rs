@@ -1,6 +1,6 @@
 //! Binary operations on arrays.
 
-use crate::{buffer::Buffer, Array, Device, DType, Shape};
+use crate::{buffer::Buffer, Array, DType, Device, Shape};
 
 /// Apply a binary function element-wise to two arrays with broadcasting.
 fn binary_op<F>(lhs: &Array, rhs: &Array, f: F) -> Array
@@ -23,14 +23,17 @@ where
 
     let result_data = if lhs.shape() == rhs.shape() {
         // Same shape - simple element-wise operation
-        lhs_data
-            .iter()
-            .zip(rhs_data.iter())
-            .map(|(&a, &b)| f(a, b))
-            .collect()
+        lhs_data.iter().zip(rhs_data.iter()).map(|(&a, &b)| f(a, b)).collect()
     } else {
         // Need broadcasting
-        broadcast_binary(&lhs_data, lhs.shape(), &rhs_data, rhs.shape(), &result_shape, f)
+        broadcast_binary(
+            &lhs_data,
+            lhs.shape(),
+            &rhs_data,
+            rhs.shape(),
+            &result_shape,
+            f,
+        )
     };
 
     let buffer = Buffer::from_f32(result_data, Device::Cpu);
@@ -63,7 +66,11 @@ where
 
 /// Convert a flat index in the result array to an index in the source array,
 /// accounting for broadcasting.
-pub(crate) fn broadcast_index(flat_idx: usize, result_shape: &Shape, src_shape: &Shape) -> usize {
+pub(crate) fn broadcast_index(
+    flat_idx: usize,
+    result_shape: &Shape,
+    src_shape: &Shape,
+) -> usize {
     let result_dims = result_shape.as_slice();
     let src_dims = src_shape.as_slice();
 
@@ -201,7 +208,8 @@ mod tests {
             vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
             Shape::new(vec![2, 3]),
         );
-        let b = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![1, 3]));
+        let b =
+            Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![1, 3]));
         let c = a.add(&b);
         assert_eq!(c.shape().as_slice(), &[2, 3]);
         assert_eq!(c.to_vec(), vec![11.0, 22.0, 33.0, 14.0, 25.0, 36.0]);
@@ -211,7 +219,8 @@ mod tests {
     fn test_broadcast_row_col() {
         // [3, 1] + [1, 3] -> [3, 3]
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3, 1]));
-        let b = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![1, 3]));
+        let b =
+            Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![1, 3]));
         let c = a.add(&b);
         assert_eq!(c.shape().as_slice(), &[3, 3]);
         assert_eq!(

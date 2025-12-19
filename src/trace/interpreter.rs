@@ -16,25 +16,33 @@ pub struct Interpreter {
 impl Interpreter {
     /// Create a new interpreter.
     pub fn new() -> Self {
-        Self {
-            cache: HashMap::new(),
-        }
+        Self { cache: HashMap::new() }
     }
 
     /// Execute an IR graph with the given inputs.
     ///
     /// Returns the output arrays.
-    pub fn execute(&mut self, graph: &IRGraph, inputs: &[Array]) -> Vec<Array> {
+    pub fn execute(
+        &mut self,
+        graph: &IRGraph,
+        inputs: &[Array],
+    ) -> Vec<Array> {
         // Clear cache for fresh execution
         self.cache.clear();
 
         // Populate cache with inputs
-        for (i, (input_node, input_array)) in graph.inputs.iter().zip(inputs.iter()).enumerate() {
+        for (i, (input_node, input_array)) in
+            graph.inputs.iter().zip(inputs.iter()).enumerate()
+        {
             // Verify input matches expected shape/dtype
             if let IRNode::Input { id, shape, dtype } = input_node.as_ref() {
                 assert_eq!(*id, i, "Input ID mismatch");
                 assert_eq!(input_array.shape(), shape, "Input shape mismatch");
-                assert_eq!(&input_array.dtype(), dtype, "Input dtype mismatch");
+                assert_eq!(
+                    &input_array.dtype(),
+                    dtype,
+                    "Input dtype mismatch"
+                );
 
                 let node_addr = Arc::as_ptr(input_node) as usize;
                 self.cache.insert(node_addr, input_array.clone());
@@ -44,11 +52,7 @@ impl Interpreter {
         }
 
         // Evaluate output nodes
-        graph
-            .outputs
-            .iter()
-            .map(|node| self.eval_node(node))
-            .collect()
+        graph.outputs.iter().map(|node| self.eval_node(node)).collect()
     }
 
     /// Evaluate a single IR node recursively.
@@ -181,9 +185,11 @@ mod tests {
         let input = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
         let neg = IRNode::unary(Primitive::Neg, input.clone());
 
-        let graph = IRGraph::new("test_neg".to_string(), vec![input], vec![neg]);
+        let graph =
+            IRGraph::new("test_neg".to_string(), vec![input], vec![neg]);
 
-        let input_data = Array::from_vec(vec![1.0, -2.0, 3.0], Shape::new(vec![3]));
+        let input_data =
+            Array::from_vec(vec![1.0, -2.0, 3.0], Shape::new(vec![3]));
         let outputs = interp.execute(&graph, &[input_data]);
 
         assert_eq!(outputs.len(), 1);
@@ -197,9 +203,14 @@ mod tests {
         // Build graph: add(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![3]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
 
-        let graph = IRGraph::new("test_add".to_string(), vec![input0, input1], vec![add]);
+        let graph = IRGraph::new(
+            "test_add".to_string(),
+            vec![input0, input1],
+            vec![add],
+        );
 
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
         let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
@@ -216,10 +227,15 @@ mod tests {
         // Build graph: mul(add(input0, input1), input0)
         let input0 = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![3]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
         let mul = IRNode::binary(Primitive::Mul, add, input0.clone());
 
-        let graph = IRGraph::new("test_complex".to_string(), vec![input0, input1], vec![mul]);
+        let graph = IRGraph::new(
+            "test_complex".to_string(),
+            vec![input0, input1],
+            vec![mul],
+        );
 
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
         let b = Array::from_vec(vec![3.0, 2.0, 1.0], Shape::new(vec![3]));
@@ -236,11 +252,14 @@ mod tests {
 
         // Build graph: sum_all(input0)
         let input = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
-        let sum = IRNode::reduce(Primitive::SumAll, input.clone(), Shape::scalar());
+        let sum =
+            IRNode::reduce(Primitive::SumAll, input.clone(), Shape::scalar());
 
-        let graph = IRGraph::new("test_sum".to_string(), vec![input], vec![sum]);
+        let graph =
+            IRGraph::new("test_sum".to_string(), vec![input], vec![sum]);
 
-        let input_data = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let input_data =
+            Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
         let outputs = interp.execute(&graph, &[input_data]);
 
         assert_eq!(outputs.len(), 1);
@@ -256,7 +275,8 @@ mod tests {
         let constant = IRNode::constant(5.0, DType::Float32);
         let add = IRNode::binary(Primitive::Add, input.clone(), constant);
 
-        let graph = IRGraph::new("test_const".to_string(), vec![input], vec![add]);
+        let graph =
+            IRGraph::new("test_const".to_string(), vec![input], vec![add]);
 
         let input_data = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
         let outputs = interp.execute(&graph, &[input_data]);

@@ -33,12 +33,7 @@ pub struct TraceContext {
 impl TraceContext {
     /// Create a new trace context.
     pub fn new(name: String) -> Self {
-        Self {
-            nodes: HashMap::new(),
-            inputs: Vec::new(),
-            next_id: 0,
-            name,
-        }
+        Self { nodes: HashMap::new(), inputs: Vec::new(), next_id: 0, name }
     }
 
     /// Generate a unique ID for a traced value.
@@ -49,7 +44,12 @@ impl TraceContext {
     }
 
     /// Register an input array.
-    pub fn register_input(&mut self, array_id: usize, shape: Shape, dtype: DType) -> Arc<IRNode> {
+    pub fn register_input(
+        &mut self,
+        array_id: usize,
+        shape: Shape,
+        dtype: DType,
+    ) -> Arc<IRNode> {
         let input_id = self.inputs.len();
         let node = IRNode::input(input_id, shape, dtype);
         self.nodes.insert(array_id, node.clone());
@@ -58,7 +58,12 @@ impl TraceContext {
     }
 
     /// Register a constant value.
-    pub fn register_constant(&mut self, array_id: usize, value: f32, dtype: DType) -> Arc<IRNode> {
+    pub fn register_constant(
+        &mut self,
+        array_id: usize,
+        value: f32,
+        dtype: DType,
+    ) -> Arc<IRNode> {
         let node = IRNode::constant(value, dtype);
         self.nodes.insert(array_id, node.clone());
         node
@@ -72,7 +77,9 @@ impl TraceContext {
         input: &Array,
     ) -> Arc<IRNode> {
         let input_id = Self::array_id(input);
-        let input_node = self.nodes.get(&input_id)
+        let input_node = self
+            .nodes
+            .get(&input_id)
             .expect("Input array not found in trace context")
             .clone();
 
@@ -92,10 +99,14 @@ impl TraceContext {
         let lhs_id = Self::array_id(lhs);
         let rhs_id = Self::array_id(rhs);
 
-        let lhs_node = self.nodes.get(&lhs_id)
+        let lhs_node = self
+            .nodes
+            .get(&lhs_id)
             .expect("LHS array not found in trace context")
             .clone();
-        let rhs_node = self.nodes.get(&rhs_id)
+        let rhs_node = self
+            .nodes
+            .get(&rhs_id)
             .expect("RHS array not found in trace context")
             .clone();
 
@@ -113,7 +124,9 @@ impl TraceContext {
         result_shape: Shape,
     ) -> Arc<IRNode> {
         let input_id = Self::array_id(input);
-        let input_node = self.nodes.get(&input_id)
+        let input_node = self
+            .nodes
+            .get(&input_id)
             .expect("Input array not found in trace context")
             .clone();
 
@@ -138,7 +151,8 @@ impl TraceContext {
             .iter()
             .map(|arr| {
                 let id = Self::array_id(arr);
-                self.nodes.get(&id)
+                self.nodes
+                    .get(&id)
                     .expect("Output array not found in trace context")
                     .clone()
             })
@@ -194,7 +208,12 @@ pub fn trace_unary(result_id: usize, op: Primitive, input: &Array) {
 }
 
 /// Register a binary operation if tracing is active.
-pub fn trace_binary(result_id: usize, op: Primitive, lhs: &Array, rhs: &Array) {
+pub fn trace_binary(
+    result_id: usize,
+    op: Primitive,
+    lhs: &Array,
+    rhs: &Array,
+) {
     TRACE_CONTEXT.with(|trace_ctx| {
         if let Some(ctx) = trace_ctx.borrow().as_ref() {
             ctx.borrow_mut().register_binary(result_id, op, lhs, rhs);
@@ -203,10 +222,20 @@ pub fn trace_binary(result_id: usize, op: Primitive, lhs: &Array, rhs: &Array) {
 }
 
 /// Register a reduction operation if tracing is active.
-pub fn trace_reduce(result_id: usize, op: Primitive, input: &Array, result_shape: Shape) {
+pub fn trace_reduce(
+    result_id: usize,
+    op: Primitive,
+    input: &Array,
+    result_shape: Shape,
+) {
     TRACE_CONTEXT.with(|trace_ctx| {
         if let Some(ctx) = trace_ctx.borrow().as_ref() {
-            ctx.borrow_mut().register_reduce(result_id, op, input, result_shape);
+            ctx.borrow_mut().register_reduce(
+                result_id,
+                op,
+                input,
+                result_shape,
+            );
         }
     });
 }

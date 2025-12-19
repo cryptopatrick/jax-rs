@@ -246,7 +246,10 @@ fn test_eye_identity() {
     );
 
     // Identity matrix property: I @ A = A
-    let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], Shape::new(vec![3, 3]));
+    let a = Array::from_vec(
+        vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+        Shape::new(vec![3, 3]),
+    );
     let result = eye.matmul(&a);
     assert_eq!(result.to_vec(), a.to_vec());
 }

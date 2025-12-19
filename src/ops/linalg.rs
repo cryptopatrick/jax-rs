@@ -1,6 +1,6 @@
 //! Linear algebra operations.
 
-use crate::{buffer::Buffer, Array, Device, DType, Shape};
+use crate::{buffer::Buffer, Array, DType, Device, Shape};
 
 impl Array {
     /// Transpose the array by reversing its axes.
@@ -87,7 +87,8 @@ impl Array {
                 a_shape[0], b_shape[0],
                 "Vector-matrix multiplication: incompatible shapes"
             );
-            return self.reshape(Shape::new(vec![1, a_shape[0]]))
+            return self
+                .reshape(Shape::new(vec![1, a_shape[0]]))
                 .matmul(other)
                 .reshape(Shape::new(vec![b_shape[1]]));
         }
@@ -98,7 +99,8 @@ impl Array {
                 a_shape[1], b_shape[0],
                 "Matrix-vector multiplication: incompatible shapes"
             );
-            return self.matmul(&other.reshape(Shape::new(vec![b_shape[0], 1])))
+            return self
+                .matmul(&other.reshape(Shape::new(vec![b_shape[0], 1])))
                 .reshape(Shape::new(vec![a_shape[0]]));
         }
 
@@ -160,7 +162,8 @@ impl Array {
 
             let a_data = self.to_vec();
             let b_data = other.to_vec();
-            let result: f32 = a_data.iter().zip(b_data.iter()).map(|(a, b)| a * b).sum();
+            let result: f32 =
+                a_data.iter().zip(b_data.iter()).map(|(a, b)| a * b).sum();
 
             let buffer = Buffer::from_f32(vec![result], Device::Cpu);
             return Array::from_buffer(buffer, Shape::scalar());
@@ -215,7 +218,10 @@ mod tests {
 
     #[test]
     fn test_transpose_2d() {
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
         let b = a.transpose();
         assert_eq!(b.shape().as_slice(), &[3, 2]);
         assert_eq!(b.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
@@ -231,8 +237,10 @@ mod tests {
 
     #[test]
     fn test_matmul_2d() {
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
-        let b = Array::from_vec(vec![5.0, 6.0, 7.0, 8.0], Shape::new(vec![2, 2]));
+        let a =
+            Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let b =
+            Array::from_vec(vec![5.0, 6.0, 7.0, 8.0], Shape::new(vec![2, 2]));
         let c = a.matmul(&b);
         assert_eq!(c.shape().as_slice(), &[2, 2]);
         // [[1, 2], [3, 4]] @ [[5, 6], [7, 8]]
@@ -243,8 +251,14 @@ mod tests {
 
     #[test]
     fn test_matmul_non_square() {
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
-        let b = Array::from_vec(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0], Shape::new(vec![3, 2]));
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let b = Array::from_vec(
+            vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+            Shape::new(vec![3, 2]),
+        );
         let c = a.matmul(&b);
         assert_eq!(c.shape().as_slice(), &[2, 2]);
         // [[1, 2, 3], [4, 5, 6]] @ [[7, 8], [9, 10], [11, 12]]
@@ -256,7 +270,8 @@ mod tests {
     #[test]
     fn test_matmul_vector() {
         // Matrix-vector multiplication
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let a =
+            Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
         let v = Array::from_vec(vec![5.0, 6.0], Shape::new(vec![2]));
         let c = a.matmul(&v);
         assert_eq!(c.shape().as_slice(), &[2]);
@@ -275,8 +290,10 @@ mod tests {
 
     #[test]
     fn test_dot_2d() {
-        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
-        let b = Array::from_vec(vec![5.0, 6.0, 7.0, 8.0], Shape::new(vec![2, 2]));
+        let a =
+            Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let b =
+            Array::from_vec(vec![5.0, 6.0, 7.0, 8.0], Shape::new(vec![2, 2]));
         let c = a.dot(&b);
         // For 2D, dot is same as matmul
         assert_eq!(c.to_vec(), vec![19.0, 22.0, 43.0, 50.0]);

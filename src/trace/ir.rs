@@ -40,13 +40,21 @@ pub enum Primitive {
 
     // Reductions
     SumAll,
-    Sum { axis: usize },
+    Sum {
+        axis: usize,
+    },
     MeanAll,
-    Mean { axis: usize },
+    Mean {
+        axis: usize,
+    },
     MaxAll,
-    MaxAxis { axis: usize },
+    MaxAxis {
+        axis: usize,
+    },
     MinAll,
-    MinAxis { axis: usize },
+    MinAxis {
+        axis: usize,
+    },
 
     // Linear algebra
     Matmul,
@@ -54,17 +62,46 @@ pub enum Primitive {
     Transpose,
 
     // Shape operations
-    Reshape { new_shape: Vec<usize> },
+    Reshape {
+        new_shape: Vec<usize>,
+    },
     Squeeze,
-    ExpandDims { axis: usize },
+    ExpandDims {
+        axis: usize,
+    },
 
     // Array creation
-    Zeros { shape: Vec<usize>, dtype: DType },
-    Ones { shape: Vec<usize>, dtype: DType },
-    Full { value: f32, shape: Vec<usize>, dtype: DType },
-    Arange { start: f32, stop: f32, step: f32, dtype: DType },
-    Linspace { start: f32, stop: f32, num: usize, endpoint: bool, dtype: DType },
-    Eye { n: usize, m: Option<usize>, dtype: DType },
+    Zeros {
+        shape: Vec<usize>,
+        dtype: DType,
+    },
+    Ones {
+        shape: Vec<usize>,
+        dtype: DType,
+    },
+    Full {
+        value: f32,
+        shape: Vec<usize>,
+        dtype: DType,
+    },
+    Arange {
+        start: f32,
+        stop: f32,
+        step: f32,
+        dtype: DType,
+    },
+    Linspace {
+        start: f32,
+        stop: f32,
+        num: usize,
+        endpoint: bool,
+        dtype: DType,
+    },
+    Eye {
+        n: usize,
+        m: Option<usize>,
+        dtype: DType,
+    },
 }
 
 /// A node in the intermediate representation graph.
@@ -73,25 +110,13 @@ pub enum Primitive {
 #[derive(Debug, Clone)]
 pub enum IRNode {
     /// Input to the computation (e.g., function argument)
-    Input {
-        id: usize,
-        shape: Shape,
-        dtype: DType,
-    },
+    Input { id: usize, shape: Shape, dtype: DType },
 
     /// Constant value
-    Constant {
-        value: f32,
-        dtype: DType,
-    },
+    Constant { value: f32, dtype: DType },
 
     /// Unary operation
-    Unary {
-        op: Primitive,
-        input: Arc<IRNode>,
-        shape: Shape,
-        dtype: DType,
-    },
+    Unary { op: Primitive, input: Arc<IRNode>, shape: Shape, dtype: DType },
 
     /// Binary operation
     Binary {
@@ -103,12 +128,7 @@ pub enum IRNode {
     },
 
     /// Reduction operation
-    Reduce {
-        op: Primitive,
-        input: Arc<IRNode>,
-        shape: Shape,
-        dtype: DType,
-    },
+    Reduce { op: Primitive, input: Arc<IRNode>, shape: Shape, dtype: DType },
 }
 
 impl IRNode {
@@ -148,37 +168,29 @@ impl IRNode {
     pub fn unary(op: Primitive, input: Arc<IRNode>) -> Arc<Self> {
         let shape = input.shape();
         let dtype = input.dtype();
-        Arc::new(IRNode::Unary {
-            op,
-            input,
-            shape,
-            dtype,
-        })
+        Arc::new(IRNode::Unary { op, input, shape, dtype })
     }
 
     /// Create a binary operation node.
-    pub fn binary(op: Primitive, lhs: Arc<IRNode>, rhs: Arc<IRNode>) -> Arc<Self> {
+    pub fn binary(
+        op: Primitive,
+        lhs: Arc<IRNode>,
+        rhs: Arc<IRNode>,
+    ) -> Arc<Self> {
         // For now, assume compatible shapes (broadcasting handled at runtime)
         let shape = lhs.shape();
         let dtype = lhs.dtype();
-        Arc::new(IRNode::Binary {
-            op,
-            lhs,
-            rhs,
-            shape,
-            dtype,
-        })
+        Arc::new(IRNode::Binary { op, lhs, rhs, shape, dtype })
     }
 
     /// Create a reduction operation node.
-    pub fn reduce(op: Primitive, input: Arc<IRNode>, result_shape: Shape) -> Arc<Self> {
+    pub fn reduce(
+        op: Primitive,
+        input: Arc<IRNode>,
+        result_shape: Shape,
+    ) -> Arc<Self> {
         let dtype = input.dtype();
-        Arc::new(IRNode::Reduce {
-            op,
-            input,
-            shape: result_shape,
-            dtype,
-        })
+        Arc::new(IRNode::Reduce { op, input, shape: result_shape, dtype })
     }
 }
 
@@ -198,12 +210,12 @@ pub struct IRGraph {
 
 impl IRGraph {
     /// Create a new IR graph.
-    pub fn new(name: String, inputs: Vec<Arc<IRNode>>, outputs: Vec<Arc<IRNode>>) -> Self {
-        Self {
-            inputs,
-            outputs,
-            name,
-        }
+    pub fn new(
+        name: String,
+        inputs: Vec<Arc<IRNode>>,
+        outputs: Vec<Arc<IRNode>>,
+    ) -> Self {
+        Self { inputs, outputs, name }
     }
 
     /// Get the number of inputs.
@@ -248,7 +260,8 @@ mod tests {
     fn test_ir_graph() {
         let input1 = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
         let input2 = IRNode::input(1, Shape::new(vec![3]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input1.clone(), input2.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input1.clone(), input2.clone());
 
         let graph = IRGraph::new(
             "test_add".to_string(),

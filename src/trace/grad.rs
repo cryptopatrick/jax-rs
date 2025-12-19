@@ -49,7 +49,8 @@ where
             let y_minus = f(&x_minus_arr);
 
             // Central difference
-            grad_data[i] = (y_plus.to_vec()[0] - y_minus.to_vec()[0]) / (2.0 * eps);
+            grad_data[i] =
+                (y_plus.to_vec()[0] - y_minus.to_vec()[0]) / (2.0 * eps);
         }
 
         Array::from_vec(grad_data, x.shape().clone())
@@ -67,15 +68,17 @@ pub struct VJPEngine {
 impl VJPEngine {
     /// Create a new VJP engine.
     pub fn new() -> Self {
-        Self {
-            gradients: HashMap::new(),
-        }
+        Self { gradients: HashMap::new() }
     }
 
     /// Compute VJP for a graph given output gradients.
     ///
     /// Returns gradients with respect to the inputs.
-    pub fn vjp(&mut self, graph: &IRGraph, cotangents: &[Array]) -> Vec<Array> {
+    pub fn vjp(
+        &mut self,
+        graph: &IRGraph,
+        cotangents: &[Array],
+    ) -> Vec<Array> {
         // Initialize output gradients
         assert_eq!(
             graph.outputs.len(),
@@ -83,7 +86,8 @@ impl VJPEngine {
             "Number of cotangents must match number of outputs"
         );
 
-        for (output, cotangent) in graph.outputs.iter().zip(cotangents.iter()) {
+        for (output, cotangent) in graph.outputs.iter().zip(cotangents.iter())
+        {
             let node_addr = Arc::as_ptr(output) as usize;
             self.gradients.insert(node_addr, cotangent.clone());
         }
@@ -99,17 +103,15 @@ impl VJPEngine {
             .iter()
             .map(|input| {
                 let node_addr = Arc::as_ptr(input) as usize;
-                self.gradients
-                    .get(&node_addr)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        // Zero gradient if not computed
-                        if let IRNode::Input { shape, dtype, .. } = input.as_ref() {
-                            Array::zeros(shape.clone(), *dtype)
-                        } else {
-                            panic!("Expected input node");
-                        }
-                    })
+                self.gradients.get(&node_addr).cloned().unwrap_or_else(|| {
+                    // Zero gradient if not computed
+                    if let IRNode::Input { shape, dtype, .. } = input.as_ref()
+                    {
+                        Array::zeros(shape.clone(), *dtype)
+                    } else {
+                        panic!("Expected input node");
+                    }
+                })
             })
             .collect()
     }
@@ -148,7 +150,12 @@ impl VJPEngine {
     }
 
     /// Backward pass for unary operations.
-    fn backward_unary(&mut self, op: &Primitive, input: &Arc<IRNode>, cotangent: &Array) {
+    fn backward_unary(
+        &mut self,
+        op: &Primitive,
+        input: &Arc<IRNode>,
+        cotangent: &Array,
+    ) {
         let input_addr = Arc::as_ptr(input) as usize;
 
         // Compute the gradient with respect to the input
@@ -162,7 +169,12 @@ impl VJPEngine {
     }
 
     /// VJP rule for unary operations.
-    fn vjp_unary(&self, op: &Primitive, input: &Arc<IRNode>, cotangent: &Array) -> Array {
+    fn vjp_unary(
+        &self,
+        op: &Primitive,
+        input: &Arc<IRNode>,
+        cotangent: &Array,
+    ) -> Array {
         // For unary ops: grad_input = cotangent * d(op)/d(input)
         // We need the input value to compute some derivatives
 
@@ -284,7 +296,12 @@ impl VJPEngine {
     }
 
     /// Backward pass for reduction operations.
-    fn backward_reduce(&mut self, op: &Primitive, input: &Arc<IRNode>, cotangent: &Array) {
+    fn backward_reduce(
+        &mut self,
+        op: &Primitive,
+        input: &Arc<IRNode>,
+        cotangent: &Array,
+    ) {
         let input_addr = Arc::as_ptr(input) as usize;
 
         let grad = self.vjp_reduce(op, input, cotangent);
@@ -297,7 +314,12 @@ impl VJPEngine {
     }
 
     /// VJP rule for reduction operations.
-    fn vjp_reduce(&self, op: &Primitive, input: &Arc<IRNode>, cotangent: &Array) -> Array {
+    fn vjp_reduce(
+        &self,
+        op: &Primitive,
+        input: &Arc<IRNode>,
+        cotangent: &Array,
+    ) -> Array {
         let input_shape = input.shape();
 
         match op {
@@ -360,9 +382,7 @@ pub struct JVPEngine {
 impl JVPEngine {
     /// Create a new JVP engine.
     pub fn new() -> Self {
-        Self {
-            tangents: HashMap::new(),
-        }
+        Self { tangents: HashMap::new() }
     }
 
     /// Compute JVP for a graph given input tangents.
@@ -382,11 +402,8 @@ impl JVPEngine {
         }
 
         // Forward pass: propagate tangents from inputs to outputs
-        let output_tangents: Vec<Array> = graph
-            .outputs
-            .iter()
-            .map(|output| self.forward(output))
-            .collect();
+        let output_tangents: Vec<Array> =
+            graph.outputs.iter().map(|output| self.forward(output)).collect();
 
         output_tangents
     }
@@ -434,7 +451,12 @@ impl JVPEngine {
     }
 
     /// JVP rule for unary operations.
-    fn jvp_unary(&self, op: &Primitive, _input: &Arc<IRNode>, tangent: &Array) -> Array {
+    fn jvp_unary(
+        &self,
+        op: &Primitive,
+        _input: &Arc<IRNode>,
+        tangent: &Array,
+    ) -> Array {
         // For unary ops: tangent_output = (d(op)/d(input)) * tangent_input
 
         match op {
@@ -597,9 +619,14 @@ mod tests {
         // Build graph: add(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![2]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![2]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
 
-        let graph = IRGraph::new("test_add".to_string(), vec![input0, input1], vec![add]);
+        let graph = IRGraph::new(
+            "test_add".to_string(),
+            vec![input0, input1],
+            vec![add],
+        );
 
         // Cotangent for output
         let cotangent = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
@@ -618,9 +645,14 @@ mod tests {
         // Build graph: sub(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![2]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![2]), DType::Float32);
-        let sub = IRNode::binary(Primitive::Sub, input0.clone(), input1.clone());
+        let sub =
+            IRNode::binary(Primitive::Sub, input0.clone(), input1.clone());
 
-        let graph = IRGraph::new("test_sub".to_string(), vec![input0, input1], vec![sub]);
+        let graph = IRGraph::new(
+            "test_sub".to_string(),
+            vec![input0, input1],
+            vec![sub],
+        );
 
         let cotangent = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
 
@@ -638,9 +670,14 @@ mod tests {
         // Build graph: add(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![2]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![2]), DType::Float32);
-        let add = IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
+        let add =
+            IRNode::binary(Primitive::Add, input0.clone(), input1.clone());
 
-        let graph = IRGraph::new("test_add".to_string(), vec![input0, input1], vec![add]);
+        let graph = IRGraph::new(
+            "test_add".to_string(),
+            vec![input0, input1],
+            vec![add],
+        );
 
         // Tangents for inputs
         let tangent0 = Array::from_vec(vec![1.0, 0.0], Shape::new(vec![2]));
@@ -659,9 +696,14 @@ mod tests {
         // Build graph: sub(input0, input1)
         let input0 = IRNode::input(0, Shape::new(vec![2]), DType::Float32);
         let input1 = IRNode::input(1, Shape::new(vec![2]), DType::Float32);
-        let sub = IRNode::binary(Primitive::Sub, input0.clone(), input1.clone());
+        let sub =
+            IRNode::binary(Primitive::Sub, input0.clone(), input1.clone());
 
-        let graph = IRGraph::new("test_sub".to_string(), vec![input0, input1], vec![sub]);
+        let graph = IRGraph::new(
+            "test_sub".to_string(),
+            vec![input0, input1],
+            vec![sub],
+        );
 
         let tangent0 = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
         let tangent1 = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
@@ -680,7 +722,8 @@ mod tests {
         let input0 = IRNode::input(0, Shape::new(vec![2]), DType::Float32);
         let neg = IRNode::unary(Primitive::Neg, input0.clone());
 
-        let graph = IRGraph::new("test_neg".to_string(), vec![input0], vec![neg]);
+        let graph =
+            IRGraph::new("test_neg".to_string(), vec![input0], vec![neg]);
 
         let tangent = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
 
@@ -696,11 +739,14 @@ mod tests {
     fn test_jvp_reduce_sum() {
         // Build graph: sum_all(input0)
         let input0 = IRNode::input(0, Shape::new(vec![3]), DType::Float32);
-        let sum = IRNode::reduce(Primitive::SumAll, input0.clone(), Shape::scalar());
+        let sum =
+            IRNode::reduce(Primitive::SumAll, input0.clone(), Shape::scalar());
 
-        let graph = IRGraph::new("test_sum".to_string(), vec![input0], vec![sum]);
+        let graph =
+            IRGraph::new("test_sum".to_string(), vec![input0], vec![sum]);
 
-        let tangent = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let tangent =
+            Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
 
         let mut engine = JVPEngine::new();
         let tangents = engine.jvp(&graph, &[tangent]);

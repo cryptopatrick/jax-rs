@@ -1,6 +1,6 @@
 //! Unary operations on arrays.
 
-use crate::{buffer::Buffer, Array, Device, DType};
+use crate::{buffer::Buffer, Array, DType, Device};
 
 #[cfg(test)]
 use crate::Shape;
@@ -113,14 +113,18 @@ mod tests {
 
     #[test]
     fn test_abs() {
-        let a = Array::from_vec(vec![1.0, -2.0, 3.0, -4.0], Shape::new(vec![4]));
+        let a =
+            Array::from_vec(vec![1.0, -2.0, 3.0, -4.0], Shape::new(vec![4]));
         let b = a.abs();
         assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
     }
 
     #[test]
     fn test_sin_cos() {
-        let a = Array::from_vec(vec![0.0, std::f32::consts::PI / 2.0], Shape::new(vec![2]));
+        let a = Array::from_vec(
+            vec![0.0, std::f32::consts::PI / 2.0],
+            Shape::new(vec![2]),
+        );
         let sin_a = a.sin();
         let cos_a = a.cos();
 
@@ -137,7 +141,11 @@ mod tests {
         let log_exp_a = exp_a.log();
 
         assert_abs_diff_eq!(exp_a.to_vec()[0], 1.0, epsilon = 1e-6);
-        assert_abs_diff_eq!(exp_a.to_vec()[1], std::f32::consts::E, epsilon = 1e-6);
+        assert_abs_diff_eq!(
+            exp_a.to_vec()[1],
+            std::f32::consts::E,
+            epsilon = 1e-6
+        );
 
         // log(exp(x)) should equal x
         assert_abs_diff_eq!(log_exp_a.to_vec()[0], 0.0, epsilon = 1e-5);
@@ -178,7 +186,8 @@ mod tests {
 
     #[test]
     fn test_sign() {
-        let a = Array::from_vec(vec![-2.0, -0.0, 0.0, 3.0], Shape::new(vec![4]));
+        let a =
+            Array::from_vec(vec![-2.0, -0.0, 0.0, 3.0], Shape::new(vec![4]));
         let b = a.sign();
         assert_eq!(b.to_vec(), vec![-1.0, 0.0, 0.0, 1.0]);
     }

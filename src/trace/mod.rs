@@ -16,7 +16,7 @@ pub use interpreter::Interpreter;
 pub use ir::{IRGraph, IRNode, Primitive};
 pub use jit::jit;
 pub use tracer::{
-    enter_trace, exit_trace, is_tracing, trace_binary, trace_reduce, trace_unary, with_trace,
-    TraceContext,
+    enter_trace, exit_trace, is_tracing, trace_binary, trace_reduce,
+    trace_unary, with_trace, TraceContext,
 };
 pub use vmap::{vmap, vmap2, VmapConfig};

@@ -176,17 +176,11 @@ mod tests {
     fn test_broadcast() {
         let s1 = Shape::new(vec![3, 1]);
         let s2 = Shape::new(vec![1, 4]);
-        assert_eq!(
-            s1.broadcast_with(&s2),
-            Some(Shape::new(vec![3, 4]))
-        );
+        assert_eq!(s1.broadcast_with(&s2), Some(Shape::new(vec![3, 4])));
 
         let s1 = Shape::new(vec![2, 3]);
         let s2 = Shape::new(vec![3]);
-        assert_eq!(
-            s1.broadcast_with(&s2),
-            Some(Shape::new(vec![2, 3]))
-        );
+        assert_eq!(s1.broadcast_with(&s2), Some(Shape::new(vec![2, 3])));
 
         let s1 = Shape::new(vec![2, 3]);
         let s2 = Shape::new(vec![4]);
