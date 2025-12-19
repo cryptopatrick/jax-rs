@@ -34,6 +34,7 @@ mod dtype;
 pub mod nn;
 mod ops;
 pub mod random;
+pub mod scipy;
 mod shape;
 pub mod trace;
 
