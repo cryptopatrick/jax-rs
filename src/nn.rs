@@ -657,6 +657,313 @@ pub fn logsumexp(x: &Array) -> f32 {
     max_val + sum_exp.ln()
 }
 
+/// Max pooling over a 1D input.
+///
+/// Applies max pooling with specified kernel size and stride.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape (length,) or (batch, length)
+/// * `kernel_size` - Size of the pooling window
+/// * `stride` - Stride of the pooling window (defaults to kernel_size if None)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 3.0, 2.0, 4.0], Shape::new(vec![4]));
+/// let y = nn::max_pool1d(&x, 2, Some(2));
+/// assert_eq!(y.to_vec(), vec![3.0, 4.0]);
+/// ```
+pub fn max_pool1d(x: &Array, kernel_size: usize, stride: Option<usize>) -> Array {
+    let stride = stride.unwrap_or(kernel_size);
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+
+    match shape.len() {
+        1 => {
+            let length = shape[0];
+            let out_length = (length - kernel_size) / stride + 1;
+            let mut result = Vec::with_capacity(out_length);
+
+            for i in 0..out_length {
+                let start = i * stride;
+                let end = start + kernel_size;
+                let max_val = data[start..end]
+                    .iter()
+                    .copied()
+                    .fold(f32::NEG_INFINITY, f32::max);
+                result.push(max_val);
+            }
+
+            Array::from_vec(result, Shape::new(vec![out_length]))
+        }
+        2 => {
+            // Batched: (batch, length)
+            let batch = shape[0];
+            let length = shape[1];
+            let out_length = (length - kernel_size) / stride + 1;
+            let mut result = Vec::with_capacity(batch * out_length);
+
+            for b in 0..batch {
+                for i in 0..out_length {
+                    let start = b * length + i * stride;
+                    let mut max_val = f32::NEG_INFINITY;
+                    for k in 0..kernel_size {
+                        max_val = max_val.max(data[start + k]);
+                    }
+                    result.push(max_val);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, out_length]))
+        }
+        _ => panic!("max_pool1d expects 1D or 2D input"),
+    }
+}
+
+/// Average pooling over a 1D input.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 3.0, 2.0, 4.0], Shape::new(vec![4]));
+/// let y = nn::avg_pool1d(&x, 2, Some(2));
+/// assert_eq!(y.to_vec(), vec![2.0, 3.0]);
+/// ```
+pub fn avg_pool1d(x: &Array, kernel_size: usize, stride: Option<usize>) -> Array {
+    let stride = stride.unwrap_or(kernel_size);
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+
+    match shape.len() {
+        1 => {
+            let length = shape[0];
+            let out_length = (length - kernel_size) / stride + 1;
+            let mut result = Vec::with_capacity(out_length);
+
+            for i in 0..out_length {
+                let start = i * stride;
+                let end = start + kernel_size;
+                let sum: f32 = data[start..end].iter().sum();
+                result.push(sum / kernel_size as f32);
+            }
+
+            Array::from_vec(result, Shape::new(vec![out_length]))
+        }
+        2 => {
+            let batch = shape[0];
+            let length = shape[1];
+            let out_length = (length - kernel_size) / stride + 1;
+            let mut result = Vec::with_capacity(batch * out_length);
+
+            for b in 0..batch {
+                for i in 0..out_length {
+                    let start = b * length + i * stride;
+                    let mut sum = 0.0;
+                    for k in 0..kernel_size {
+                        sum += data[start + k];
+                    }
+                    result.push(sum / kernel_size as f32);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, out_length]))
+        }
+        _ => panic!("avg_pool1d expects 1D or 2D input"),
+    }
+}
+
+/// Max pooling over a 2D input.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape (height, width) or (batch, height, width)
+/// * `kernel_size` - Size of the pooling window (height, width)
+/// * `stride` - Stride of the pooling window
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(
+///     vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+///     Shape::new(vec![3, 3])
+/// );
+/// let y = nn::max_pool2d(&x, (2, 2), Some((2, 2)));
+/// assert_eq!(y.to_vec(), vec![5.0]);
+/// ```
+pub fn max_pool2d(
+    x: &Array,
+    kernel_size: (usize, usize),
+    stride: Option<(usize, usize)>,
+) -> Array {
+    let stride = stride.unwrap_or(kernel_size);
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+    let (kh, kw) = kernel_size;
+    let (sh, sw) = stride;
+
+    match shape.len() {
+        2 => {
+            // (height, width)
+            let (h, w) = (shape[0], shape[1]);
+            let out_h = (h - kh) / sh + 1;
+            let out_w = (w - kw) / sw + 1;
+            let mut result = Vec::with_capacity(out_h * out_w);
+
+            for oh in 0..out_h {
+                for ow in 0..out_w {
+                    let mut max_val = f32::NEG_INFINITY;
+                    for kh_i in 0..kh {
+                        for kw_i in 0..kw {
+                            let h_idx = oh * sh + kh_i;
+                            let w_idx = ow * sw + kw_i;
+                            max_val = max_val.max(data[h_idx * w + w_idx]);
+                        }
+                    }
+                    result.push(max_val);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![out_h, out_w]))
+        }
+        3 => {
+            // (batch, height, width)
+            let (batch, h, w) = (shape[0], shape[1], shape[2]);
+            let out_h = (h - kh) / sh + 1;
+            let out_w = (w - kw) / sw + 1;
+            let mut result = Vec::with_capacity(batch * out_h * out_w);
+
+            for b in 0..batch {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut max_val = f32::NEG_INFINITY;
+                        for kh_i in 0..kh {
+                            for kw_i in 0..kw {
+                                let h_idx = oh * sh + kh_i;
+                                let w_idx = ow * sw + kw_i;
+                                let idx = b * (h * w) + h_idx * w + w_idx;
+                                max_val = max_val.max(data[idx]);
+                            }
+                        }
+                        result.push(max_val);
+                    }
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, out_h, out_w]))
+        }
+        _ => panic!("max_pool2d expects 2D or 3D input"),
+    }
+}
+
+/// Average pooling over a 2D input.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(
+///     vec![1.0, 2.0, 3.0, 4.0],
+///     Shape::new(vec![2, 2])
+/// );
+/// let y = nn::avg_pool2d(&x, (2, 2), Some((2, 2)));
+/// assert_eq!(y.to_vec(), vec![2.5]);
+/// ```
+pub fn avg_pool2d(
+    x: &Array,
+    kernel_size: (usize, usize),
+    stride: Option<(usize, usize)>,
+) -> Array {
+    let stride = stride.unwrap_or(kernel_size);
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+    let (kh, kw) = kernel_size;
+    let (sh, sw) = stride;
+    let kernel_area = (kh * kw) as f32;
+
+    match shape.len() {
+        2 => {
+            let (h, w) = (shape[0], shape[1]);
+            let out_h = (h - kh) / sh + 1;
+            let out_w = (w - kw) / sw + 1;
+            let mut result = Vec::with_capacity(out_h * out_w);
+
+            for oh in 0..out_h {
+                for ow in 0..out_w {
+                    let mut sum = 0.0;
+                    for kh_i in 0..kh {
+                        for kw_i in 0..kw {
+                            let h_idx = oh * sh + kh_i;
+                            let w_idx = ow * sw + kw_i;
+                            sum += data[h_idx * w + w_idx];
+                        }
+                    }
+                    result.push(sum / kernel_area);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![out_h, out_w]))
+        }
+        3 => {
+            let (batch, h, w) = (shape[0], shape[1], shape[2]);
+            let out_h = (h - kh) / sh + 1;
+            let out_w = (w - kw) / sw + 1;
+            let mut result = Vec::with_capacity(batch * out_h * out_w);
+
+            for b in 0..batch {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let mut sum = 0.0;
+                        for kh_i in 0..kh {
+                            for kw_i in 0..kw {
+                                let h_idx = oh * sh + kh_i;
+                                let w_idx = ow * sw + kw_i;
+                                let idx = b * (h * w) + h_idx * w + w_idx;
+                                sum += data[idx];
+                            }
+                        }
+                        result.push(sum / kernel_area);
+                    }
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, out_h, out_w]))
+        }
+        _ => panic!("avg_pool2d expects 2D or 3D input"),
+    }
+}
+
+/// Global max pooling - reduces each sample to a single value.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 5.0, 3.0, 2.0], Shape::new(vec![4]));
+/// let y = nn::global_max_pool(&x);
+/// assert_eq!(y, 5.0);
+/// ```
+pub fn global_max_pool(x: &Array) -> f32 {
+    x.max_all()
+}
+
+/// Global average pooling - reduces each sample to a single value.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+/// let y = nn::global_avg_pool(&x);
+/// assert_eq!(y, 2.5);
+/// ```
+pub fn global_avg_pool(x: &Array) -> f32 {
+    x.mean_all()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
