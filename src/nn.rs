@@ -964,6 +964,210 @@ pub fn global_avg_pool(x: &Array) -> f32 {
     x.mean_all()
 }
 
+/// 1D convolution operation.
+///
+/// Applies a 1D convolution over the input array with the given kernel.
+/// Uses 'valid' padding (no padding) and stride of 1.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [length]
+/// * `kernel` - Convolution kernel of shape [kernel_size]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+/// let kernel = Array::from_vec(vec![1.0, 0.0, -1.0], Shape::new(vec![3]));
+/// let result = nn::conv1d(&x, &kernel);
+/// assert_eq!(result.shape().as_slice(), &[3]);
+/// ```
+pub fn conv1d(x: &Array, kernel: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 1, "Input must be 1D");
+    assert_eq!(kernel.shape().ndim(), 1, "Kernel must be 1D");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_len = x_data.len();
+    let k_len = kernel_data.len();
+
+    assert!(k_len <= x_len, "Kernel size must be <= input size");
+
+    let output_len = x_len - k_len + 1;
+    let mut result = vec![0.0; output_len];
+
+    for i in 0..output_len {
+        let mut sum = 0.0;
+        for j in 0..k_len {
+            sum += x_data[i + j] * kernel_data[j];
+        }
+        result[i] = sum;
+    }
+
+    Array::from_vec(result, Shape::new(vec![output_len]))
+}
+
+/// 2D convolution operation.
+///
+/// Applies a 2D convolution over the input array with the given kernel.
+/// Uses 'valid' padding (no padding) and stride of 1.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [height, width]
+/// * `kernel` - Convolution kernel of shape [kernel_height, kernel_width]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(
+///     vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+///     Shape::new(vec![3, 3])
+/// );
+/// let kernel = Array::from_vec(
+///     vec![1.0, 0.0, -1.0, 1.0],
+///     Shape::new(vec![2, 2])
+/// );
+/// let result = nn::conv2d(&x, &kernel);
+/// assert_eq!(result.shape().as_slice(), &[2, 2]);
+/// ```
+pub fn conv2d(x: &Array, kernel: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 2, "Input must be 2D");
+    assert_eq!(kernel.shape().ndim(), 2, "Kernel must be 2D");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_shape = x.shape().as_slice();
+    let k_shape = kernel.shape().as_slice();
+
+    let (x_h, x_w) = (x_shape[0], x_shape[1]);
+    let (k_h, k_w) = (k_shape[0], k_shape[1]);
+
+    assert!(k_h <= x_h, "Kernel height must be <= input height");
+    assert!(k_w <= x_w, "Kernel width must be <= input width");
+
+    let out_h = x_h - k_h + 1;
+    let out_w = x_w - k_w + 1;
+    let mut result = vec![0.0; out_h * out_w];
+
+    for i in 0..out_h {
+        for j in 0..out_w {
+            let mut sum = 0.0;
+            for ki in 0..k_h {
+                for kj in 0..k_w {
+                    let x_idx = (i + ki) * x_w + (j + kj);
+                    let k_idx = ki * k_w + kj;
+                    sum += x_data[x_idx] * kernel_data[k_idx];
+                }
+            }
+            result[i * out_w + j] = sum;
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![out_h, out_w]))
+}
+
+/// 1D transposed convolution (deconvolution) operation.
+///
+/// Applies a 1D transposed convolution, which is the gradient of conv1d
+/// with respect to its input. Also known as fractionally-strided convolution.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [length]
+/// * `kernel` - Convolution kernel of shape [kernel_size]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let kernel = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+/// let result = nn::conv_transpose1d(&x, &kernel);
+/// assert_eq!(result.shape().as_slice(), &[4]);
+/// ```
+pub fn conv_transpose1d(x: &Array, kernel: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 1, "Input must be 1D");
+    assert_eq!(kernel.shape().ndim(), 1, "Kernel must be 1D");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_len = x_data.len();
+    let k_len = kernel_data.len();
+
+    let output_len = x_len + k_len - 1;
+    let mut result = vec![0.0; output_len];
+
+    for i in 0..x_len {
+        for j in 0..k_len {
+            result[i + j] += x_data[i] * kernel_data[j];
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![output_len]))
+}
+
+/// 2D transposed convolution (deconvolution) operation.
+///
+/// Applies a 2D transposed convolution, which is the gradient of conv2d
+/// with respect to its input.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [height, width]
+/// * `kernel` - Convolution kernel of shape [kernel_height, kernel_width]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+/// let kernel = Array::from_vec(vec![1.0, 0.5, 0.5, 0.25], Shape::new(vec![2, 2]));
+/// let result = nn::conv_transpose2d(&x, &kernel);
+/// assert_eq!(result.shape().as_slice(), &[3, 3]);
+/// ```
+pub fn conv_transpose2d(x: &Array, kernel: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 2, "Input must be 2D");
+    assert_eq!(kernel.shape().ndim(), 2, "Kernel must be 2D");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_shape = x.shape().as_slice();
+    let k_shape = kernel.shape().as_slice();
+
+    let (x_h, x_w) = (x_shape[0], x_shape[1]);
+    let (k_h, k_w) = (k_shape[0], k_shape[1]);
+
+    let out_h = x_h + k_h - 1;
+    let out_w = x_w + k_w - 1;
+    let mut result = vec![0.0; out_h * out_w];
+
+    for i in 0..x_h {
+        for j in 0..x_w {
+            for ki in 0..k_h {
+                for kj in 0..k_w {
+                    let out_idx = (i + ki) * out_w + (j + kj);
+                    let x_idx = i * x_w + j;
+                    let k_idx = ki * k_w + kj;
+                    result[out_idx] += x_data[x_idx] * kernel_data[k_idx];
+                }
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![out_h, out_w]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1088,5 +1292,60 @@ mod tests {
 
         // Mean should be close to 0 after normalization
         assert!(mean.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_conv1d() {
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            Shape::new(vec![5]),
+        );
+        let kernel = Array::from_vec(vec![1.0, 2.0, 1.0], Shape::new(vec![3]));
+        let result = conv1d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[3]);
+        // [1*1 + 2*2 + 3*1, 2*1 + 3*2 + 4*1, 3*1 + 4*2 + 5*1]
+        // [1+4+3, 2+6+4, 3+8+5]
+        assert_eq!(result.to_vec(), vec![8.0, 12.0, 16.0]);
+    }
+
+    #[test]
+    fn test_conv2d() {
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            Shape::new(vec![3, 3]),
+        );
+        let kernel =
+            Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let result = conv2d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+        // Should extract top-left and bottom-right elements
+        assert_eq!(result.to_vec(), vec![6.0, 8.0, 12.0, 14.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose1d() {
+        let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let kernel = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+        let result = conv_transpose1d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[4]);
+        // [1*1, 1*2+2*1, 2*2+3*1, 3*2]
+        assert_eq!(result.to_vec(), vec![1.0, 4.0, 7.0, 6.0]);
+    }
+
+    #[test]
+    fn test_conv_transpose2d() {
+        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let kernel =
+            Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let result = conv_transpose2d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[3, 3]);
+        // Should spread values across output
+        let data = result.to_vec();
+        assert_eq!(data[0], 1.0); // top-left
+        assert_eq!(data[8], 4.0); // bottom-right
     }
 }
