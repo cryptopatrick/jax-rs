@@ -56,6 +56,10 @@ pub enum Primitive {
     MinAxis {
         axis: usize,
     },
+    ProdAll,
+    ProdAxis {
+        axis: usize,
+    },
 
     // Linear algebra
     Matmul,

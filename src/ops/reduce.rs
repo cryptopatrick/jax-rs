@@ -192,6 +192,67 @@ impl Array {
             |acc, x| acc.min(x),
         )
     }
+
+    /// Product of all elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let prod = a.prod_all();
+    /// assert_eq!(prod, 24.0);
+    /// ```
+    pub fn prod_all(&self) -> f32 {
+        reduce_all(self, 1.0, |acc, x| acc * x)
+    }
+
+    /// Product along a specific axis.
+    pub fn prod(&self, axis: usize) -> Array {
+        reduce_axis(self, axis, Primitive::ProdAxis { axis }, 1.0, |acc, x| {
+            acc * x
+        })
+    }
+
+    /// Index of minimum element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+    /// let idx = a.argmin();
+    /// assert_eq!(idx, 1);
+    /// ```
+    pub fn argmin(&self) -> usize {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter()
+            .enumerate()
+            .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
+            .unwrap()
+    }
+
+    /// Index of maximum element.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 2.0], Shape::new(vec![4]));
+    /// let idx = a.argmax();
+    /// assert_eq!(idx, 2);
+    /// ```
+    pub fn argmax(&self) -> usize {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .map(|(idx, _)| idx)
+            .unwrap()
+    }
 }
 
 #[cfg(test)]

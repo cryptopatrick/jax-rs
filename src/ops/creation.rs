@@ -131,6 +131,168 @@ impl Array {
     pub fn identity(n: usize, dtype: DType) -> Self {
         Self::eye(n, None, dtype)
     }
+
+    /// Extract diagonal or construct diagonal array.
+    ///
+    /// If input is 1-D, constructs a 2-D array with the input on the diagonal.
+    /// If input is 2-D, extracts the diagonal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Construct diagonal matrix from 1-D array
+    /// let v = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let d = Array::diag(&v, 0);
+    /// assert_eq!(d.shape().as_slice(), &[3, 3]);
+    /// assert_eq!(d.to_vec(), vec![1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 3.0]);
+    /// ```
+    pub fn diag(v: &Self, k: i32) -> Self {
+        assert_eq!(v.dtype(), DType::Float32, "Only Float32 supported");
+
+        if v.ndim() == 1 {
+            // Construct diagonal matrix
+            let n = v.size();
+            let offset = k.unsigned_abs() as usize;
+            let matrix_size = n + offset;
+
+            let mut data = vec![0.0; matrix_size * matrix_size];
+            let v_data = v.to_vec();
+
+            for (i, &val) in v_data.iter().enumerate() {
+                let (row, col) =
+                    if k >= 0 { (i, i + offset) } else { (i + offset, i) };
+                data[row * matrix_size + col] = val;
+            }
+
+            Self::from_vec(data, Shape::new(vec![matrix_size, matrix_size]))
+        } else if v.ndim() == 2 {
+            // Extract diagonal
+            let shape = v.shape().as_slice();
+            let (rows, cols) = (shape[0], shape[1]);
+            let data = v.to_vec();
+
+            let diag_len = if k >= 0 {
+                (cols as i32 - k).min(rows as i32).max(0) as usize
+            } else {
+                (rows as i32 + k).min(cols as i32).max(0) as usize
+            };
+
+            let mut diag_data = Vec::with_capacity(diag_len);
+
+            for i in 0..diag_len {
+                let (row, col) = if k >= 0 {
+                    (i, i + k as usize)
+                } else {
+                    (i + (-k) as usize, i)
+                };
+                diag_data.push(data[row * cols + col]);
+            }
+
+            Self::from_vec(diag_data, Shape::new(vec![diag_len]))
+        } else {
+            panic!("diag only supports 1-D and 2-D arrays");
+        }
+    }
+
+    /// Lower triangle of an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let m = Array::from_vec(
+    ///     vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    ///     Shape::new(vec![3, 3])
+    /// );
+    /// let lower = m.tril(0);
+    /// assert_eq!(lower.to_vec(), vec![1.0, 0.0, 0.0, 4.0, 5.0, 0.0, 7.0, 8.0, 9.0]);
+    /// ```
+    pub fn tril(&self, k: i32) -> Self {
+        assert_eq!(self.ndim(), 2, "tril only supports 2-D arrays");
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let shape = self.shape().as_slice();
+        let (rows, cols) = (shape[0], shape[1]);
+        let data = self.to_vec();
+
+        let mut result = Vec::with_capacity(data.len());
+
+        for i in 0..rows {
+            for j in 0..cols {
+                let val = if (j as i32) <= (i as i32 + k) {
+                    data[i * cols + j]
+                } else {
+                    0.0
+                };
+                result.push(val);
+            }
+        }
+
+        Self::from_vec(result, self.shape().clone())
+    }
+
+    /// Upper triangle of an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let m = Array::from_vec(
+    ///     vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+    ///     Shape::new(vec![3, 3])
+    /// );
+    /// let upper = m.triu(0);
+    /// assert_eq!(upper.to_vec(), vec![1.0, 2.0, 3.0, 0.0, 5.0, 6.0, 0.0, 0.0, 9.0]);
+    /// ```
+    pub fn triu(&self, k: i32) -> Self {
+        assert_eq!(self.ndim(), 2, "triu only supports 2-D arrays");
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let shape = self.shape().as_slice();
+        let (rows, cols) = (shape[0], shape[1]);
+        let data = self.to_vec();
+
+        let mut result = Vec::with_capacity(data.len());
+
+        for i in 0..rows {
+            for j in 0..cols {
+                let val = if (j as i32) >= (i as i32 + k) {
+                    data[i * cols + j]
+                } else {
+                    0.0
+                };
+                result.push(val);
+            }
+        }
+
+        Self::from_vec(result, self.shape().clone())
+    }
+
+    /// Lower triangular matrix with ones on the diagonal and below.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, DType, Shape};
+    /// let tri = Array::tri(3, None, 0, DType::Float32);
+    /// assert_eq!(tri.to_vec(), vec![1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 1.0, 1.0]);
+    /// ```
+    pub fn tri(n: usize, m: Option<usize>, k: i32, dtype: DType) -> Self {
+        assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+
+        let cols = m.unwrap_or(n);
+        let mut data = Vec::with_capacity(n * cols);
+
+        for i in 0..n {
+            for j in 0..cols {
+                let val = if (j as i32) <= (i as i32 + k) { 1.0 } else { 0.0 };
+                data.push(val);
+            }
+        }
+
+        Self::from_vec(data, Shape::new(vec![n, cols]))
+    }
 }
 
 #[cfg(test)]
