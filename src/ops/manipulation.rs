@@ -229,6 +229,236 @@ impl Array {
             panic!("flip only supports axis=0 for multi-dimensional arrays");
         }
     }
+
+    /// Pad array with a constant value.
+    ///
+    /// # Arguments
+    ///
+    /// * `pad_width` - Number of values to pad on each side: [(before, after), ...]
+    /// * `constant_value` - Value to use for padding
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let padded = a.pad(&[(1, 1)], 0.0);
+    /// assert_eq!(padded.to_vec(), vec![0.0, 1.0, 2.0, 3.0, 0.0]);
+    /// ```
+    pub fn pad(&self, pad_width: &[(usize, usize)], constant_value: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            pad_width.len(),
+            self.ndim(),
+            "pad_width must match number of dimensions"
+        );
+
+        let shape = self.shape().as_slice();
+        let data = self.to_vec();
+
+        // Compute output shape
+        let mut out_shape = Vec::with_capacity(shape.len());
+        for (i, &dim) in shape.iter().enumerate() {
+            out_shape.push(pad_width[i].0 + dim + pad_width[i].1);
+        }
+
+        // For 1D case
+        if self.ndim() == 1 {
+            let (before, after) = pad_width[0];
+            let mut result = vec![constant_value; before];
+            result.extend_from_slice(&data);
+            result.extend(vec![constant_value; after]);
+            return Array::from_vec(result, Shape::new(out_shape));
+        }
+
+        // For 2D case
+        if self.ndim() == 2 {
+            let (h, w) = (shape[0], shape[1]);
+            let (h_before, h_after) = pad_width[0];
+            let (w_before, w_after) = pad_width[1];
+
+            let out_h = out_shape[0];
+            let out_w = out_shape[1];
+            let mut result = vec![constant_value; out_h * out_w];
+
+            for i in 0..h {
+                for j in 0..w {
+                    let out_i = i + h_before;
+                    let out_j = j + w_before;
+                    result[out_i * out_w + out_j] = data[i * w + j];
+                }
+            }
+
+            return Array::from_vec(result, Shape::new(out_shape));
+        }
+
+        panic!("pad only supports 1D and 2D arrays for now");
+    }
+
+    /// Pad array with edge values (repeat border elements).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let padded = a.pad_edge(&[(1, 1)]);
+    /// assert_eq!(padded.to_vec(), vec![1.0, 1.0, 2.0, 3.0, 3.0]);
+    /// ```
+    pub fn pad_edge(&self, pad_width: &[(usize, usize)]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            pad_width.len(),
+            self.ndim(),
+            "pad_width must match number of dimensions"
+        );
+
+        let shape = self.shape().as_slice();
+        let data = self.to_vec();
+
+        // For 1D case
+        if self.ndim() == 1 {
+            let (before, after) = pad_width[0];
+            let mut result = vec![data[0]; before];
+            result.extend_from_slice(&data);
+            result.extend(vec![data[data.len() - 1]; after]);
+
+            let out_len = before + shape[0] + after;
+            return Array::from_vec(result, Shape::new(vec![out_len]));
+        }
+
+        // For 2D case
+        if self.ndim() == 2 {
+            let (h, w) = (shape[0], shape[1]);
+            let (h_before, h_after) = pad_width[0];
+            let (w_before, w_after) = pad_width[1];
+
+            let out_h = h_before + h + h_after;
+            let out_w = w_before + w + w_after;
+            let mut result = vec![0.0; out_h * out_w];
+
+            for out_i in 0..out_h {
+                for out_j in 0..out_w {
+                    // Map output indices to input indices
+                    let in_i = if out_i < h_before {
+                        0
+                    } else if out_i >= h_before + h {
+                        h - 1
+                    } else {
+                        out_i - h_before
+                    };
+
+                    let in_j = if out_j < w_before {
+                        0
+                    } else if out_j >= w_before + w {
+                        w - 1
+                    } else {
+                        out_j - w_before
+                    };
+
+                    result[out_i * out_w + out_j] = data[in_i * w + in_j];
+                }
+            }
+
+            return Array::from_vec(result, Shape::new(vec![out_h, out_w]));
+        }
+
+        panic!("pad_edge only supports 1D and 2D arrays for now");
+    }
+
+    /// Pad array with reflected values (mirror border elements).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let padded = a.pad_reflect(&[(1, 1)]);
+    /// assert_eq!(padded.to_vec(), vec![2.0, 1.0, 2.0, 3.0, 2.0]);
+    /// ```
+    pub fn pad_reflect(&self, pad_width: &[(usize, usize)]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            pad_width.len(),
+            self.ndim(),
+            "pad_width must match number of dimensions"
+        );
+
+        let shape = self.shape().as_slice();
+        let data = self.to_vec();
+
+        // For 1D case
+        if self.ndim() == 1 {
+            let len = shape[0];
+            let (before, after) = pad_width[0];
+
+            assert!(
+                before < len && after < len,
+                "Padding width must be less than array size for reflect mode"
+            );
+
+            let mut result = Vec::with_capacity(before + len + after);
+
+            // Left padding (reflect)
+            for i in 0..before {
+                result.push(data[before - i]);
+            }
+
+            // Original data
+            result.extend_from_slice(&data);
+
+            // Right padding (reflect)
+            for i in 0..after {
+                result.push(data[len - 2 - i]);
+            }
+
+            let out_len = before + len + after;
+            return Array::from_vec(result, Shape::new(vec![out_len]));
+        }
+
+        // For 2D case
+        if self.ndim() == 2 {
+            let (h, w) = (shape[0], shape[1]);
+            let (h_before, h_after) = pad_width[0];
+            let (w_before, w_after) = pad_width[1];
+
+            assert!(
+                h_before < h && h_after < h && w_before < w && w_after < w,
+                "Padding width must be less than array size for reflect mode"
+            );
+
+            let out_h = h_before + h + h_after;
+            let out_w = w_before + w + w_after;
+            let mut result = vec![0.0; out_h * out_w];
+
+            for out_i in 0..out_h {
+                for out_j in 0..out_w {
+                    // Map output indices to input indices with reflection
+                    let in_i = if out_i < h_before {
+                        h_before - out_i
+                    } else if out_i >= h_before + h {
+                        h - 2 - (out_i - h_before - h)
+                    } else {
+                        out_i - h_before
+                    };
+
+                    let in_j = if out_j < w_before {
+                        w_before - out_j
+                    } else if out_j >= w_before + w {
+                        w - 2 - (out_j - w_before - w)
+                    } else {
+                        out_j - w_before
+                    };
+
+                    result[out_i * out_w + out_j] = data[in_i * w + in_j];
+                }
+            }
+
+            return Array::from_vec(result, Shape::new(vec![out_h, out_w]));
+        }
+
+        panic!("pad_reflect only supports 1D and 2D arrays for now");
+    }
 }
 
 #[cfg(test)]
