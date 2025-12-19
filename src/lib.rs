@@ -31,6 +31,7 @@ mod array;
 mod buffer;
 mod device;
 mod dtype;
+pub mod nn;
 mod ops;
 pub mod random;
 mod shape;
