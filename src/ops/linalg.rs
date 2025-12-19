@@ -172,6 +172,374 @@ impl Array {
         // For higher dimensions, use matmul
         self.matmul(other)
     }
+
+    /// Compute the norm of a vector or matrix.
+    ///
+    /// # Arguments
+    ///
+    /// * `ord` - Order of the norm. Common values:
+    ///   - `1.0`: L1 norm (sum of absolute values)
+    ///   - `2.0`: L2 norm (Euclidean norm)
+    ///   - `f32::INFINITY`: L-infinity norm (maximum absolute value)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let l2_norm = a.norm(2.0);
+    /// assert_eq!(l2_norm, 5.0); // sqrt(3^2 + 4^2) = 5
+    /// ```
+    pub fn norm(&self, ord: f32) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        if ord == f32::INFINITY {
+            // L-infinity norm: max absolute value
+            data.iter().map(|x| x.abs()).fold(0.0, f32::max)
+        } else if ord == 1.0 {
+            // L1 norm: sum of absolute values
+            data.iter().map(|x| x.abs()).sum()
+        } else if ord == 2.0 {
+            // L2 norm: Euclidean norm
+            data.iter().map(|x| x * x).sum::<f32>().sqrt()
+        } else {
+            // General Lp norm: (sum |x|^p)^(1/p)
+            data.iter()
+                .map(|x| x.abs().powf(ord))
+                .sum::<f32>()
+                .powf(1.0 / ord)
+        }
+    }
+
+    /// Compute the determinant of a square matrix.
+    ///
+    /// Uses LU decomposition for matrices larger than 3x3.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let det = a.det();
+    /// assert_eq!(det, -2.0); // 1*4 - 2*3 = -2
+    /// ```
+    pub fn det(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "Determinant requires 2D array");
+        assert_eq!(shape[0], shape[1], "Determinant requires square matrix");
+
+        let n = shape[0];
+        let data = self.to_vec();
+
+        match n {
+            1 => data[0],
+            2 => {
+                // 2x2: ad - bc
+                data[0] * data[3] - data[1] * data[2]
+            }
+            3 => {
+                // 3x3: Sarrus rule
+                let a = data[0];
+                let b = data[1];
+                let c = data[2];
+                let d = data[3];
+                let e = data[4];
+                let f = data[5];
+                let g = data[6];
+                let h = data[7];
+                let i = data[8];
+                a * e * i + b * f * g + c * d * h - c * e * g - b * d * i - a * f * h
+            }
+            _ => {
+                // For larger matrices, use LU decomposition
+                let (_, u, p) = self.lu_decomposition();
+                let u_data = u.to_vec();
+
+                // det(A) = det(P) * det(L) * det(U)
+                // det(L) = 1 (unit diagonal)
+                // det(U) = product of diagonal elements
+                // det(P) = (-1)^(number of swaps)
+                let mut det_u = 1.0;
+                for i in 0..n {
+                    det_u *= u_data[i * n + i];
+                }
+
+                // Count permutation parity
+                let mut swaps = 0;
+                let mut visited = vec![false; n];
+                for i in 0..n {
+                    if !visited[i] {
+                        let mut j = i;
+                        let mut cycle_len = 0;
+                        while !visited[j] {
+                            visited[j] = true;
+                            j = p[j];
+                            cycle_len += 1;
+                        }
+                        if cycle_len > 1 {
+                            swaps += cycle_len - 1;
+                        }
+                    }
+                }
+
+                if swaps % 2 == 0 {
+                    det_u
+                } else {
+                    -det_u
+                }
+            }
+        }
+    }
+
+    /// LU decomposition with partial pivoting.
+    ///
+    /// Returns (L, U, P) where:
+    /// - L is lower triangular with unit diagonal
+    /// - U is upper triangular
+    /// - P is permutation array (row swaps)
+    fn lu_decomposition(&self) -> (Array, Array, Vec<usize>) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "LU decomposition requires 2D array");
+        assert_eq!(shape[0], shape[1], "LU decomposition requires square matrix");
+
+        let n = shape[0];
+        let data = self.to_vec();
+
+        // Initialize permutation
+        let mut p: Vec<usize> = (0..n).collect();
+        let mut a = data.clone();
+
+        for k in 0..n {
+            // Find pivot
+            let mut pivot_row = k;
+            let mut max_val = a[k * n + k].abs();
+            for i in (k + 1)..n {
+                let val = a[i * n + k].abs();
+                if val > max_val {
+                    max_val = val;
+                    pivot_row = i;
+                }
+            }
+
+            // Swap rows if needed
+            if pivot_row != k {
+                p.swap(k, pivot_row);
+                for j in 0..n {
+                    a.swap(k * n + j, pivot_row * n + j);
+                }
+            }
+
+            // Eliminate column
+            for i in (k + 1)..n {
+                let factor = a[i * n + k] / a[k * n + k];
+                a[i * n + k] = factor; // Store L factor in lower triangle
+                for j in (k + 1)..n {
+                    a[i * n + j] -= factor * a[k * n + j];
+                }
+            }
+        }
+
+        // Extract L and U
+        let mut l_data = vec![0.0; n * n];
+        let mut u_data = vec![0.0; n * n];
+
+        for i in 0..n {
+            for j in 0..n {
+                if i > j {
+                    l_data[i * n + j] = a[i * n + j];
+                } else if i == j {
+                    l_data[i * n + j] = 1.0;
+                    u_data[i * n + j] = a[i * n + j];
+                } else {
+                    u_data[i * n + j] = a[i * n + j];
+                }
+            }
+        }
+
+        let l = Array::from_vec(l_data, Shape::new(vec![n, n]));
+        let u = Array::from_vec(u_data, Shape::new(vec![n, n]));
+
+        (l, u, p)
+    }
+
+    /// Compute the matrix inverse.
+    ///
+    /// Uses Gauss-Jordan elimination.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![4.0, 7.0, 2.0, 6.0], Shape::new(vec![2, 2]));
+    /// let inv_a = a.inv();
+    /// // Verify A * A^-1 = I
+    /// let identity = a.matmul(&inv_a);
+    /// let expected = vec![1.0, 0.0, 0.0, 1.0];
+    /// for (i, &val) in identity.to_vec().iter().enumerate() {
+    ///     assert!((val - expected[i]).abs() < 1e-5);
+    /// }
+    /// ```
+    pub fn inv(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "Matrix inversion requires 2D array");
+        assert_eq!(shape[0], shape[1], "Matrix inversion requires square matrix");
+
+        let n = shape[0];
+        let data = self.to_vec();
+
+        // Create augmented matrix [A | I]
+        let mut aug = vec![0.0; n * 2 * n];
+        for i in 0..n {
+            for j in 0..n {
+                aug[i * 2 * n + j] = data[i * n + j];
+            }
+            aug[i * 2 * n + n + i] = 1.0; // Identity on the right
+        }
+
+        // Gauss-Jordan elimination
+        for k in 0..n {
+            // Find pivot
+            let mut pivot_row = k;
+            let mut max_val = aug[k * 2 * n + k].abs();
+            for i in (k + 1)..n {
+                let val = aug[i * 2 * n + k].abs();
+                if val > max_val {
+                    max_val = val;
+                    pivot_row = i;
+                }
+            }
+
+            assert!(
+                max_val > 1e-10,
+                "Matrix is singular and cannot be inverted"
+            );
+
+            // Swap rows
+            if pivot_row != k {
+                for j in 0..(2 * n) {
+                    aug.swap(k * 2 * n + j, pivot_row * 2 * n + j);
+                }
+            }
+
+            // Scale pivot row
+            let pivot = aug[k * 2 * n + k];
+            for j in 0..(2 * n) {
+                aug[k * 2 * n + j] /= pivot;
+            }
+
+            // Eliminate column
+            for i in 0..n {
+                if i != k {
+                    let factor = aug[i * 2 * n + k];
+                    for j in 0..(2 * n) {
+                        aug[i * 2 * n + j] -= factor * aug[k * 2 * n + j];
+                    }
+                }
+            }
+        }
+
+        // Extract inverse from right half
+        let mut inv_data = vec![0.0; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                inv_data[i * n + j] = aug[i * 2 * n + n + j];
+            }
+        }
+
+        Array::from_vec(inv_data, Shape::new(vec![n, n]))
+    }
+
+    /// Solve a linear system Ax = b.
+    ///
+    /// Uses Gaussian elimination with partial pivoting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Solve: 2x + y = 5, x + 3y = 6
+    /// let a = Array::from_vec(vec![2.0, 1.0, 1.0, 3.0], Shape::new(vec![2, 2]));
+    /// let b = Array::from_vec(vec![5.0, 6.0], Shape::new(vec![2]));
+    /// let x = a.solve(&b);
+    /// // Solution: x = [1.8, 1.4]
+    /// assert!((x.to_vec()[0] - 1.8).abs() < 1e-5);
+    /// assert!((x.to_vec()[1] - 1.4).abs() < 1e-5);
+    /// ```
+    pub fn solve(&self, b: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(b.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = b.shape().as_slice();
+
+        assert_eq!(a_shape.len(), 2, "A must be 2D");
+        assert_eq!(a_shape[0], a_shape[1], "A must be square");
+        assert_eq!(b_shape.len(), 1, "b must be 1D");
+        assert_eq!(a_shape[0], b_shape[0], "Incompatible dimensions");
+
+        let n = a_shape[0];
+        let a_data = self.to_vec();
+        let b_data = b.to_vec();
+
+        // Create augmented matrix [A | b]
+        let mut aug = vec![0.0; n * (n + 1)];
+        for i in 0..n {
+            for j in 0..n {
+                aug[i * (n + 1) + j] = a_data[i * n + j];
+            }
+            aug[i * (n + 1) + n] = b_data[i];
+        }
+
+        // Forward elimination with partial pivoting
+        for k in 0..n {
+            // Find pivot
+            let mut pivot_row = k;
+            let mut max_val = aug[k * (n + 1) + k].abs();
+            for i in (k + 1)..n {
+                let val = aug[i * (n + 1) + k].abs();
+                if val > max_val {
+                    max_val = val;
+                    pivot_row = i;
+                }
+            }
+
+            assert!(
+                max_val > 1e-10,
+                "Matrix is singular, system has no unique solution"
+            );
+
+            // Swap rows
+            if pivot_row != k {
+                for j in 0..(n + 1) {
+                    aug.swap(k * (n + 1) + j, pivot_row * (n + 1) + j);
+                }
+            }
+
+            // Eliminate below
+            for i in (k + 1)..n {
+                let factor = aug[i * (n + 1) + k] / aug[k * (n + 1) + k];
+                for j in k..(n + 1) {
+                    aug[i * (n + 1) + j] -= factor * aug[k * (n + 1) + j];
+                }
+            }
+        }
+
+        // Back substitution
+        let mut x = vec![0.0; n];
+        for i in (0..n).rev() {
+            let mut sum = aug[i * (n + 1) + n];
+            for j in (i + 1)..n {
+                sum -= aug[i * (n + 1) + j] * x[j];
+            }
+            x[i] = sum / aug[i * (n + 1) + i];
+        }
+
+        Array::from_vec(x, Shape::new(vec![n]))
+    }
 }
 
 /// Helper function for n-dimensional transpose.
