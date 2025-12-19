@@ -32,6 +32,7 @@ mod buffer;
 mod device;
 mod dtype;
 mod ops;
+pub mod random;
 mod shape;
 pub mod trace;
 
