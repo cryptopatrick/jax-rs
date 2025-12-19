@@ -400,6 +400,263 @@ pub fn layer_norm(x: &Array, epsilon: f32) -> Array {
     Array::from_vec(result, x.shape().clone())
 }
 
+/// ReLU-6 activation: min(max(0, x), 6).
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![-1.0, 3.0, 7.0], Shape::new(vec![3]));
+/// let y = nn::relu6(&x);
+/// assert_eq!(y.to_vec(), vec![0.0, 3.0, 6.0]);
+/// ```
+pub fn relu6(x: &Array) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data.iter().map(|&v| v.max(0.0).min(6.0)).collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Softplus activation: log(1 + exp(x)).
+///
+/// A smooth approximation of ReLU.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+/// let y = nn::softplus(&x);
+/// // softplus(0) ≈ ln(2) ≈ 0.693
+/// assert!((y.to_vec()[0] - 0.693).abs() < 0.01);
+/// ```
+pub fn softplus(x: &Array) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data.iter().map(|&v| (1.0 + v.exp()).ln()).collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Softsign activation: x / (1 + |x|).
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![-2.0, 0.0, 2.0], Shape::new(vec![3]));
+/// let y = nn::softsign(&x);
+/// // softsign(-2) = -2/3, softsign(0) = 0, softsign(2) = 2/3
+/// assert!((y.to_vec()[0] + 0.666).abs() < 0.01);
+/// assert_eq!(y.to_vec()[1], 0.0);
+/// assert!((y.to_vec()[2] - 0.666).abs() < 0.01);
+/// ```
+pub fn softsign(x: &Array) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data.iter().map(|&v| v / (1.0 + v.abs())).collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// SiLU (Swish) activation: x * sigmoid(x).
+///
+/// Also known as Swish activation.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+/// let y = nn::silu(&x);
+/// assert_eq!(y.to_vec()[0], 0.0);
+/// ```
+pub fn silu(x: &Array) -> Array {
+    let sig = sigmoid(x);
+    x.mul(&sig)
+}
+
+/// Swish activation (alias for SiLU).
+pub fn swish(x: &Array) -> Array {
+    silu(x)
+}
+
+/// Log-sigmoid activation: log(sigmoid(x)).
+///
+/// Numerically stable version of log(1 / (1 + exp(-x))).
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+/// let y = nn::log_sigmoid(&x);
+/// // log(sigmoid(0)) = log(0.5) ≈ -0.693
+/// assert!((y.to_vec()[0] + 0.693).abs() < 0.01);
+/// ```
+pub fn log_sigmoid(x: &Array) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data
+        .iter()
+        .map(|&v| {
+            if v >= 0.0 {
+                -(1.0 + (-v).exp()).ln()
+            } else {
+                v - (1.0 + v.exp()).ln()
+            }
+        })
+        .collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Continuously Differentiable Exponential Linear Unit (CELU).
+///
+/// CELU(x) = max(0, x) + min(0, alpha * (exp(x/alpha) - 1))
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![-1.0, 0.0, 1.0], Shape::new(vec![3]));
+/// let y = nn::celu(&x, 1.0);
+/// ```
+pub fn celu(x: &Array, alpha: f32) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data
+        .iter()
+        .map(|&v| {
+            if v > 0.0 {
+                v
+            } else {
+                alpha * ((v / alpha).exp() - 1.0)
+            }
+        })
+        .collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Gated Linear Unit (GLU).
+///
+/// Splits input along specified axis and applies sigmoid gating.
+/// GLU(x) = x[:half] * sigmoid(x[half:])
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+/// let y = nn::glu(&x, 0);
+/// assert_eq!(y.shape().as_slice(), &[2]);
+/// ```
+pub fn glu(x: &Array, axis: isize) -> Array {
+    let ndim = x.ndim() as isize;
+    let ax = if axis < 0 { (ndim + axis) as usize } else { axis as usize };
+
+    assert!(ax < x.ndim(), "Axis out of bounds");
+
+    let shape = x.shape().as_slice();
+    let dim_size = shape[ax];
+    assert_eq!(dim_size % 2, 0, "GLU requires even dimension size along axis");
+
+    let half = dim_size / 2;
+    let data = x.to_vec();
+
+    // Simple implementation for 1D case
+    if x.ndim() == 1 {
+        let left = &data[..half];
+        let right = &data[half..];
+
+        let result: Vec<f32> = left
+            .iter()
+            .zip(right.iter())
+            .map(|(&l, &r)| l * (1.0 / (1.0 + (-r).exp())))
+            .collect();
+
+        Array::from_vec(result, Shape::new(vec![half]))
+    } else {
+        // For higher dimensions, only support last axis for now
+        assert_eq!(ax, x.ndim() - 1, "GLU only supports last axis for multi-dimensional arrays");
+
+        let mut result_shape = shape.to_vec();
+        result_shape[ax] = half;
+
+        let stride = dim_size;
+        let num_groups = data.len() / stride;
+        let mut result = Vec::with_capacity(num_groups * half);
+
+        for g in 0..num_groups {
+            let offset = g * stride;
+            for i in 0..half {
+                let left = data[offset + i];
+                let right = data[offset + half + i];
+                result.push(left * (1.0 / (1.0 + (-right).exp())));
+            }
+        }
+
+        Array::from_vec(result, Shape::new(result_shape))
+    }
+}
+
+/// Squareplus activation: (x + sqrt(x^2 + b)) / 2.
+///
+/// A smooth approximation to ReLU with parameter b controlling smoothness.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+/// let y = nn::squareplus(&x, 4.0);
+/// // squareplus(0, 4) = 2/2 = 1
+/// assert!((y.to_vec()[0] - 1.0).abs() < 1e-5);
+/// ```
+pub fn squareplus(x: &Array, b: f32) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data
+        .iter()
+        .map(|&v| (v + (v * v + b).sqrt()) / 2.0)
+        .collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Mish activation: x * tanh(softplus(x)).
+///
+/// Mish(x) = x * tanh(ln(1 + exp(x)))
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+/// let y = nn::mish(&x);
+/// ```
+pub fn mish(x: &Array) -> Array {
+    let data = x.to_vec();
+    let result: Vec<f32> = data
+        .iter()
+        .map(|&v| {
+            let sp = (1.0 + v.exp()).ln();
+            v * sp.tanh()
+        })
+        .collect();
+    Array::from_vec(result, x.shape().clone())
+}
+
+/// Log-sum-exp: log(sum(exp(x), axis)).
+///
+/// Numerically stable computation of log(sum(exp(x))).
+/// If axis is None, reduces over all elements.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let y = nn::logsumexp(&x);
+/// ```
+pub fn logsumexp(x: &Array) -> f32 {
+    let data = x.to_vec();
+    let max_val = data.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    let sum_exp: f32 = data.iter().map(|&v| (v - max_val).exp()).sum();
+    max_val + sum_exp.ln()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
