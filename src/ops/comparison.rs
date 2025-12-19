@@ -104,6 +104,119 @@ impl Array {
     pub fn ne(&self, other: &Array) -> Array {
         compare_op(self, other, |a, b| a != b)
     }
+
+    /// Logical NOT element-wise.
+    ///
+    /// Treats 0.0 as false, non-zero as true.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 0.0], Shape::new(vec![3]));
+    /// let b = a.logical_not();
+    /// assert_eq!(b.to_vec(), vec![1.0, 0.0, 1.0]);
+    /// ```
+    pub fn logical_not(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| if x == 0.0 { 1.0 } else { 0.0 })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Logical AND element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 1.0, 0.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+    /// let c = a.logical_and(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 0.0, 0.0]);
+    /// ```
+    pub fn logical_and(&self, other: &Array) -> Array {
+        compare_op(self, other, |a, b| a != 0.0 && b != 0.0)
+    }
+
+    /// Logical OR element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 1.0, 0.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+    /// let c = a.logical_or(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 1.0, 0.0]);
+    /// ```
+    pub fn logical_or(&self, other: &Array) -> Array {
+        compare_op(self, other, |a, b| a != 0.0 || b != 0.0)
+    }
+
+    /// Logical XOR element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 1.0, 0.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+    /// let c = a.logical_xor(&b);
+    /// assert_eq!(c.to_vec(), vec![0.0, 1.0, 0.0]);
+    /// ```
+    pub fn logical_xor(&self, other: &Array) -> Array {
+        compare_op(self, other, |a, b| (a != 0.0) != (b != 0.0))
+    }
+
+    /// Test if all elements are true (non-zero).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// assert!(a.all());
+    /// let b = Array::from_vec(vec![1.0, 0.0, 3.0], Shape::new(vec![3]));
+    /// assert!(!b.all());
+    /// ```
+    pub fn all(&self) -> bool {
+        let data = self.to_vec();
+        data.iter().all(|&x| x != 0.0)
+    }
+
+    /// Test if any element is true (non-zero).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 0.0, 1.0], Shape::new(vec![3]));
+    /// assert!(a.any());
+    /// let b = Array::from_vec(vec![0.0, 0.0, 0.0], Shape::new(vec![3]));
+    /// assert!(!b.any());
+    /// ```
+    pub fn any(&self) -> bool {
+        let data = self.to_vec();
+        data.iter().any(|&x| x != 0.0)
+    }
+
+    /// Count the number of true (non-zero) elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 0.0, 1.0, 0.0, 1.0], Shape::new(vec![5]));
+    /// assert_eq!(a.count_nonzero(), 3);
+    /// ```
+    pub fn count_nonzero(&self) -> usize {
+        let data = self.to_vec();
+        data.iter().filter(|&&x| x != 0.0).count()
+    }
 }
 
 #[cfg(test)]

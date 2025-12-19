@@ -105,6 +105,208 @@ impl Array {
             }
         })
     }
+
+    /// Hyperbolic sine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.sinh();
+    /// assert_eq!(b.to_vec()[0], 0.0);
+    /// ```
+    pub fn sinh(&self) -> Array {
+        unary_op(self, Primitive::Sin, |x| x.sinh())
+    }
+
+    /// Hyperbolic cosine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.cosh();
+    /// assert_eq!(b.to_vec()[0], 1.0);
+    /// ```
+    pub fn cosh(&self) -> Array {
+        unary_op(self, Primitive::Cos, |x| x.cosh())
+    }
+
+    /// Arcsine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0], Shape::new(vec![2]));
+    /// let b = a.asin();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// assert!((b.to_vec()[1] - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+    /// ```
+    pub fn asin(&self) -> Array {
+        unary_op(self, Primitive::Sin, |x| x.asin())
+    }
+
+    /// Arccosine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0], Shape::new(vec![1]));
+    /// let b = a.acos();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn acos(&self) -> Array {
+        unary_op(self, Primitive::Cos, |x| x.acos())
+    }
+
+    /// Arctangent element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0], Shape::new(vec![2]));
+    /// let b = a.atan();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// assert!((b.to_vec()[1] - std::f32::consts::FRAC_PI_4).abs() < 1e-6);
+    /// ```
+    pub fn atan(&self) -> Array {
+        unary_op(self, Primitive::Tan, |x| x.atan())
+    }
+
+    /// Inverse hyperbolic sine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.asinh();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn asinh(&self) -> Array {
+        unary_op(self, Primitive::Sin, |x| x.asinh())
+    }
+
+    /// Inverse hyperbolic cosine element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0], Shape::new(vec![1]));
+    /// let b = a.acosh();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn acosh(&self) -> Array {
+        unary_op(self, Primitive::Cos, |x| x.acosh())
+    }
+
+    /// Inverse hyperbolic tangent element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.atanh();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn atanh(&self) -> Array {
+        unary_op(self, Primitive::Tanh, |x| x.atanh())
+    }
+
+    /// Ceiling function element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.2, 2.7, -0.5], Shape::new(vec![3]));
+    /// let b = a.ceil();
+    /// assert_eq!(b.to_vec(), vec![2.0, 3.0, 0.0]);
+    /// ```
+    pub fn ceil(&self) -> Array {
+        unary_op(self, Primitive::Sign, |x| x.ceil())
+    }
+
+    /// Floor function element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.2, 2.7, -0.5], Shape::new(vec![3]));
+    /// let b = a.floor();
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, -1.0]);
+    /// ```
+    pub fn floor(&self) -> Array {
+        unary_op(self, Primitive::Sign, |x| x.floor())
+    }
+
+    /// Round to nearest integer element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.2, 2.7, -0.5], Shape::new(vec![3]));
+    /// let b = a.round();
+    /// assert_eq!(b.to_vec(), vec![1.0, 3.0, -1.0]);
+    /// ```
+    pub fn round(&self) -> Array {
+        unary_op(self, Primitive::Sign, |x| x.round())
+    }
+
+    /// Truncate to integer element-wise (round toward zero).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.7, 2.3, -1.7], Shape::new(vec![3]));
+    /// let b = a.trunc();
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, -1.0]);
+    /// ```
+    pub fn trunc(&self) -> Array {
+        unary_op(self, Primitive::Sign, |x| x.trunc())
+    }
+
+    /// Exponential minus 1 (e^x - 1) element-wise.
+    ///
+    /// More accurate than exp(x) - 1 for small values of x.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.expm1();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn expm1(&self) -> Array {
+        unary_op(self, Primitive::Exp, |x| x.exp_m1())
+    }
+
+    /// Natural logarithm of 1 + x element-wise.
+    ///
+    /// More accurate than log(1 + x) for small values of x.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0], Shape::new(vec![1]));
+    /// let b = a.log1p();
+    /// assert!((b.to_vec()[0] - 0.0).abs() < 1e-6);
+    /// ```
+    pub fn log1p(&self) -> Array {
+        unary_op(self, Primitive::Log, |x| x.ln_1p())
+    }
 }
 
 #[cfg(test)]
