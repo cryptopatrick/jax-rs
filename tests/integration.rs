@@ -5,6 +5,30 @@
 use jax_rs::{grad, jit, vmap, Array, DType, Shape};
 
 #[test]
+fn test_jit_grad_composition() {
+    // Test composing JIT and grad
+    let f = |x: &Array| x.mul(x).sum_all_array();
+    let df = grad(f);
+    let jit_df = jit("grad_square", df);
+
+    let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+
+    // First call - compiles
+    let grad1 = jit_df.call(&[x.clone()]);
+    assert_eq!(grad1.len(), 1);
+
+    // Second call - uses cache
+    let grad2 = jit_df.call(&[x.clone()]);
+    assert_eq!(grad2.len(), 1);
+
+    // Should be approximately [2, 4, 6]
+    let g = &grad1[0];
+    assert!((g.to_vec()[0] - 2.0).abs() < 0.1);
+    assert!((g.to_vec()[1] - 4.0).abs() < 0.1);
+    assert!((g.to_vec()[2] - 6.0).abs() < 0.1);
+}
+
+#[test]
 fn test_vmap_grad_composition() {
     // Test composing vmap and grad
     let f = |x: &Array| x.mul(x).sum_all_array();
