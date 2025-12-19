@@ -253,6 +253,196 @@ impl Array {
             .map(|(idx, _)| idx)
             .unwrap()
     }
+
+    /// Variance of all elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let var = a.var();
+    /// assert!((var - 1.25).abs() < 1e-6);
+    /// ```
+    pub fn var(&self) -> f32 {
+        let mean = self.mean_all();
+        let data = self.to_vec();
+        let sum_sq_diff: f32 = data.iter().map(|&x| (x - mean).powi(2)).sum();
+        sum_sq_diff / data.len() as f32
+    }
+
+    /// Standard deviation of all elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let std = a.std();
+    /// assert!((std - 1.118).abs() < 0.01);
+    /// ```
+    pub fn std(&self) -> f32 {
+        self.var().sqrt()
+    }
+
+    /// Variance along a specific axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let var_axis0 = a.var_axis(0);
+    /// assert_eq!(var_axis0.shape().as_slice(), &[2]);
+    /// ```
+    pub fn var_axis(&self, axis: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(axis < self.ndim(), "Axis out of bounds");
+
+        let mean = self.mean(axis);
+        let mean_data = mean.to_vec();
+
+        let shape = self.shape().as_slice();
+        let data = self.to_vec();
+
+        // Result shape has the reduced axis removed
+        let mut result_dims: Vec<usize> = shape.to_vec();
+        result_dims.remove(axis);
+        let result_shape = if result_dims.is_empty() {
+            Shape::scalar()
+        } else {
+            Shape::new(result_dims.clone())
+        };
+
+        let result_size = result_shape.size();
+        let mut result_data = vec![0.0; result_size];
+
+        // Compute strides for input
+        let mut strides = vec![1; shape.len()];
+        for i in (0..shape.len() - 1).rev() {
+            strides[i] = strides[i + 1] * shape[i + 1];
+        }
+
+        // Iterate over result indices
+        for (result_idx, item) in result_data.iter_mut().enumerate() {
+            // Convert flat result index to multi-dimensional
+            let mut result_multi = vec![0; result_dims.len()];
+            let mut idx = result_idx;
+            for i in (0..result_dims.len()).rev() {
+                result_multi[i] = idx % result_shape.as_slice()[i];
+                idx /= result_shape.as_slice()[i];
+            }
+
+            let mean_val = mean_data[result_idx];
+            let mut sum_sq = 0.0;
+
+            // Iterate over the reduced axis
+            for axis_idx in 0..shape[axis] {
+                let mut input_multi = Vec::with_capacity(shape.len());
+                let mut result_i = 0;
+                for i in 0..shape.len() {
+                    if i == axis {
+                        input_multi.push(axis_idx);
+                    } else {
+                        input_multi.push(result_multi[result_i]);
+                        result_i += 1;
+                    }
+                }
+
+                // Convert multi-dimensional index to flat
+                let flat_idx: usize = input_multi
+                    .iter()
+                    .zip(strides.iter())
+                    .map(|(idx, stride)| idx * stride)
+                    .sum();
+
+                let diff = data[flat_idx] - mean_val;
+                sum_sq += diff * diff;
+            }
+
+            *item = sum_sq / shape[axis] as f32;
+        }
+
+        Array::from_vec(result_data, result_shape)
+    }
+
+    /// Standard deviation along a specific axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let std_axis0 = a.std_axis(0);
+    /// assert_eq!(std_axis0.shape().as_slice(), &[2]);
+    /// ```
+    pub fn std_axis(&self, axis: usize) -> Array {
+        let var = self.var_axis(axis);
+        let data = var.to_vec();
+        let result: Vec<f32> = data.iter().map(|&x| x.sqrt()).collect();
+        Array::from_vec(result, var.shape().clone())
+    }
+
+    /// Median of all elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 3.0, 2.0], Shape::new(vec![3]));
+    /// let med = a.median();
+    /// assert_eq!(med, 2.0);
+    /// ```
+    pub fn median(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let len = data.len();
+        if len % 2 == 0 {
+            (data[len / 2 - 1] + data[len / 2]) / 2.0
+        } else {
+            data[len / 2]
+        }
+    }
+
+    /// Percentile of all elements.
+    ///
+    /// # Arguments
+    ///
+    /// * `q` - Percentile to compute (0-100)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let p50 = a.percentile(50.0);
+    /// assert_eq!(p50, 3.0);
+    /// ```
+    pub fn percentile(&self, q: f32) -> f32 {
+        assert!(q >= 0.0 && q <= 100.0, "Percentile must be between 0 and 100");
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let len = data.len();
+        if len == 1 {
+            return data[0];
+        }
+
+        let index = (q / 100.0) * (len - 1) as f32;
+        let lower = index.floor() as usize;
+        let upper = index.ceil() as usize;
+
+        if lower == upper {
+            data[lower]
+        } else {
+            let weight = index - lower as f32;
+            data[lower] * (1.0 - weight) + data[upper] * weight
+        }
+    }
 }
 
 #[cfg(test)]
