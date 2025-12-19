@@ -1,9 +1,10 @@
 //! Binary operations on arrays.
 
+use crate::trace::{is_tracing, trace_binary, Primitive};
 use crate::{buffer::Buffer, Array, DType, Device, Shape};
 
 /// Apply a binary function element-wise to two arrays with broadcasting.
-fn binary_op<F>(lhs: &Array, rhs: &Array, f: F) -> Array
+fn binary_op<F>(lhs: &Array, rhs: &Array, op: Primitive, f: F) -> Array
 where
     F: Fn(f32, f32) -> f32,
 {
@@ -37,7 +38,14 @@ where
     };
 
     let buffer = Buffer::from_f32(result_data, Device::Cpu);
-    Array::from_buffer(buffer, result_shape)
+    let result = Array::from_buffer(buffer, result_shape);
+
+    // Register with trace context if tracing is active
+    if is_tracing() {
+        trace_binary(result.id(), op, lhs, rhs);
+    }
+
+    result
 }
 
 /// Helper function to perform binary operation with broadcasting.
@@ -115,37 +123,37 @@ impl Array {
     /// assert_eq!(c.to_vec(), vec![11.0, 22.0, 33.0]);
     /// ```
     pub fn add(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a + b)
+        binary_op(self, other, Primitive::Add, |a, b| a + b)
     }
 
     /// Subtract two arrays element-wise with broadcasting.
     pub fn sub(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a - b)
+        binary_op(self, other, Primitive::Sub, |a, b| a - b)
     }
 
     /// Multiply two arrays element-wise with broadcasting.
     pub fn mul(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a * b)
+        binary_op(self, other, Primitive::Mul, |a, b| a * b)
     }
 
     /// Divide two arrays element-wise with broadcasting.
     pub fn div(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a / b)
+        binary_op(self, other, Primitive::Div, |a, b| a / b)
     }
 
     /// Raise elements to a power element-wise with broadcasting.
     pub fn pow(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a.powf(b))
+        binary_op(self, other, Primitive::Pow, |a, b| a.powf(b))
     }
 
     /// Element-wise minimum.
     pub fn minimum(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a.min(b))
+        binary_op(self, other, Primitive::Min, |a, b| a.min(b))
     }
 
     /// Element-wise maximum.
     pub fn maximum(&self, other: &Array) -> Array {
-        binary_op(self, other, |a, b| a.max(b))
+        binary_op(self, other, Primitive::Max, |a, b| a.max(b))
     }
 }
 

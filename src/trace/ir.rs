@@ -20,6 +20,7 @@ pub enum Primitive {
     Sqrt,
     Reciprocal,
     Square,
+    Sign,
 
     // Binary operations
     Add,

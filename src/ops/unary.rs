@@ -1,12 +1,13 @@
 //! Unary operations on arrays.
 
+use crate::trace::{is_tracing, trace_unary, Primitive};
 use crate::{buffer::Buffer, Array, DType, Device};
 
 #[cfg(test)]
 use crate::Shape;
 
 /// Apply a unary function element-wise to an array.
-fn unary_op<F>(input: &Array, f: F) -> Array
+fn unary_op<F>(input: &Array, op: Primitive, f: F) -> Array
 where
     F: Fn(f32) -> f32,
 {
@@ -17,7 +18,14 @@ where
     let result_data: Vec<f32> = data.iter().map(|&x| f(x)).collect();
     let buffer = Buffer::from_f32(result_data, Device::Cpu);
 
-    Array::from_buffer(buffer, input.shape().clone())
+    let result = Array::from_buffer(buffer, input.shape().clone());
+
+    // Register with trace context if tracing is active
+    if is_tracing() {
+        trace_unary(result.id(), op, input);
+    }
+
+    result
 }
 
 impl Array {
@@ -32,62 +40,62 @@ impl Array {
     /// assert_eq!(b.to_vec(), vec![-1.0, 2.0, -3.0]);
     /// ```
     pub fn neg(&self) -> Array {
-        unary_op(self, |x| -x)
+        unary_op(self, Primitive::Neg, |x| -x)
     }
 
     /// Absolute value element-wise.
     pub fn abs(&self) -> Array {
-        unary_op(self, |x| x.abs())
+        unary_op(self, Primitive::Abs, |x| x.abs())
     }
 
     /// Sine element-wise.
     pub fn sin(&self) -> Array {
-        unary_op(self, |x| x.sin())
+        unary_op(self, Primitive::Sin, |x| x.sin())
     }
 
     /// Cosine element-wise.
     pub fn cos(&self) -> Array {
-        unary_op(self, |x| x.cos())
+        unary_op(self, Primitive::Cos, |x| x.cos())
     }
 
     /// Tangent element-wise.
     pub fn tan(&self) -> Array {
-        unary_op(self, |x| x.tan())
+        unary_op(self, Primitive::Tan, |x| x.tan())
     }
 
     /// Hyperbolic tangent element-wise.
     pub fn tanh(&self) -> Array {
-        unary_op(self, |x| x.tanh())
+        unary_op(self, Primitive::Tanh, |x| x.tanh())
     }
 
     /// Natural exponential (e^x) element-wise.
     pub fn exp(&self) -> Array {
-        unary_op(self, |x| x.exp())
+        unary_op(self, Primitive::Exp, |x| x.exp())
     }
 
     /// Natural logarithm element-wise.
     pub fn log(&self) -> Array {
-        unary_op(self, |x| x.ln())
+        unary_op(self, Primitive::Log, |x| x.ln())
     }
 
     /// Square root element-wise.
     pub fn sqrt(&self) -> Array {
-        unary_op(self, |x| x.sqrt())
+        unary_op(self, Primitive::Sqrt, |x| x.sqrt())
     }
 
     /// Reciprocal (1/x) element-wise.
     pub fn reciprocal(&self) -> Array {
-        unary_op(self, |x| 1.0 / x)
+        unary_op(self, Primitive::Reciprocal, |x| 1.0 / x)
     }
 
     /// Square (x^2) element-wise.
     pub fn square(&self) -> Array {
-        unary_op(self, |x| x * x)
+        unary_op(self, Primitive::Square, |x| x * x)
     }
 
     /// Sign function element-wise (-1, 0, or 1).
     pub fn sign(&self) -> Array {
-        unary_op(self, |x| {
+        unary_op(self, Primitive::Sign, |x| {
             if x > 0.0 {
                 1.0
             } else if x < 0.0 {

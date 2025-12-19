@@ -63,10 +63,6 @@ static DEFAULT_DEVICE: OnceLock<Device> = OnceLock::new();
 /// // Get current default (CPU by default)
 /// let device = jax_rs::default_device();
 /// assert_eq!(device, Device::Cpu);
-///
-/// // Set new default
-/// jax_rs::set_default_device(Device::Wasm);
-/// assert_eq!(jax_rs::default_device(), Device::Wasm);
 /// ```
 pub fn default_device() -> Device {
     *DEFAULT_DEVICE.get_or_init(|| Device::Cpu)

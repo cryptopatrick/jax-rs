@@ -2,9 +2,11 @@
 //!
 //! This module implements gradient computation using vector-jacobian products.
 
-use crate::trace::{IRGraph, IRNode, Primitive};
+use crate::trace::{with_trace, IRGraph, IRNode, Primitive, TraceContext};
 use crate::Array;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
 /// Compute the gradient of a function.
@@ -28,12 +30,10 @@ where
     F: Fn(&Array) -> Array,
 {
     move |x: &Array| {
-        // For now, compute gradient using numerical differentiation
-        // Full implementation will use reverse-mode AD
+        // For now, use numerical differentiation
+        // Full tracing-based AD will be implemented in future phase
         let eps = 1e-5;
-        let y = f(x);
 
-        // Simple numerical gradient for scalar output
         let x_data = x.to_vec();
         let mut grad_data = vec![0.0; x_data.len()];
 

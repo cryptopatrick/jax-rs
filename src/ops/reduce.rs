@@ -1,5 +1,6 @@
 //! Reduction operations on arrays.
 
+use crate::trace::{is_tracing, trace_reduce, Primitive};
 use crate::{buffer::Buffer, Array, DType, Device, Shape};
 
 /// Reduce over all elements with a binary operation.
@@ -13,7 +14,13 @@ where
 }
 
 /// Reduce along a specific axis.
-fn reduce_axis<F>(input: &Array, axis: usize, init: f32, f: F) -> Array
+fn reduce_axis<F>(
+    input: &Array,
+    axis: usize,
+    op: Primitive,
+    init: f32,
+    f: F,
+) -> Array
 where
     F: Fn(f32, f32) -> f32,
 {
@@ -81,7 +88,14 @@ where
     }
 
     let buffer = Buffer::from_f32(result_data, Device::Cpu);
-    Array::from_buffer(buffer, result_shape)
+    let result = Array::from_buffer(buffer, result_shape.clone());
+
+    // Register with trace context if tracing is active
+    if is_tracing() {
+        trace_reduce(result.id(), op, input, result_shape);
+    }
+
+    result
 }
 
 impl Array {
@@ -104,7 +118,19 @@ impl Array {
     /// This is a convenience method for autodiff that wraps `sum_all()`.
     pub fn sum_all_array(&self) -> Array {
         let val = self.sum_all();
-        Array::from_vec(vec![val], crate::Shape::scalar())
+        let result = Array::from_vec(vec![val], crate::Shape::scalar());
+
+        // Register with trace context if tracing is active
+        if is_tracing() {
+            trace_reduce(
+                result.id(),
+                Primitive::SumAll,
+                self,
+                crate::Shape::scalar(),
+            );
+        }
+
+        result
     }
 
     /// Sum along a specific axis.
@@ -120,7 +146,7 @@ impl Array {
     /// assert_eq!(sum_axis1.to_vec(), vec![6.0, 15.0]);
     /// ```
     pub fn sum(&self, axis: usize) -> Array {
-        reduce_axis(self, axis, 0.0, |acc, x| acc + x)
+        reduce_axis(self, axis, Primitive::Sum { axis }, 0.0, |acc, x| acc + x)
     }
 
     /// Mean of all elements.
@@ -130,11 +156,9 @@ impl Array {
 
     /// Mean along a specific axis.
     pub fn mean(&self, axis: usize) -> Array {
-        let sum = self.sum(axis);
-        let count = self.shape().as_slice()[axis] as f32;
-        let data: Vec<f32> = sum.to_vec().iter().map(|&x| x / count).collect();
-        let buffer = Buffer::from_f32(data, Device::Cpu);
-        Array::from_buffer(buffer, sum.shape().clone())
+        reduce_axis(self, axis, Primitive::Mean { axis }, 0.0, |acc, x| {
+            acc + x / (self.shape().as_slice()[axis] as f32)
+        })
     }
 
     /// Maximum of all elements.
@@ -144,7 +168,13 @@ impl Array {
 
     /// Maximum along a specific axis.
     pub fn max(&self, axis: usize) -> Array {
-        reduce_axis(self, axis, f32::NEG_INFINITY, |acc, x| acc.max(x))
+        reduce_axis(
+            self,
+            axis,
+            Primitive::MaxAxis { axis },
+            f32::NEG_INFINITY,
+            |acc, x| acc.max(x),
+        )
     }
 
     /// Minimum of all elements.
@@ -154,7 +184,13 @@ impl Array {
 
     /// Minimum along a specific axis.
     pub fn min(&self, axis: usize) -> Array {
-        reduce_axis(self, axis, f32::INFINITY, |acc, x| acc.min(x))
+        reduce_axis(
+            self,
+            axis,
+            Primitive::MinAxis { axis },
+            f32::INFINITY,
+            |acc, x| acc.min(x),
+        )
     }
 }
 

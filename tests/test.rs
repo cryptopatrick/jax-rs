@@ -2,7 +2,7 @@
 //!
 //! Tests complete workflows combining multiple features.
 
-use jax_rs::{grad, jit, vmap, Array, DType, Shape};
+use jax_rs::{grad, vmap, Array, DType, Shape};
 
 #[test]
 fn test_vmap_grad_composition() {
@@ -117,8 +117,8 @@ fn test_array_creation_consistency() {
     let ones = Array::ones(shape.clone(), DType::Float32);
     assert_eq!(ones.to_vec(), vec![1.0; 6]);
 
-    let full = Array::full(3.14, shape.clone(), DType::Float32);
-    assert!(full.to_vec().iter().all(|&x| (x - 3.14).abs() < 0.001));
+    let full = Array::full(42.0, shape.clone(), DType::Float32);
+    assert!(full.to_vec().iter().all(|&x| (x - 42.0).abs() < 0.001));
 }
 
 #[test]
@@ -252,4 +252,74 @@ fn test_eye_identity() {
     );
     let result = eye.matmul(&a);
     assert_eq!(result.to_vec(), a.to_vec());
+}
+
+// Tracing tests
+
+#[test]
+fn test_tracing_binary_op() {
+    use jax_rs::trace::{enter_trace, exit_trace, is_tracing, TraceContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let ctx = Rc::new(RefCell::new(TraceContext::new("test".to_string())));
+
+    let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    let y = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+
+    {
+        let mut ctx_mut = ctx.borrow_mut();
+        ctx_mut.register_input(x.id(), x.shape().clone(), x.dtype());
+        ctx_mut.register_input(y.id(), y.shape().clone(), y.dtype());
+    }
+
+    assert!(!is_tracing());
+    enter_trace(ctx.clone());
+    assert!(is_tracing());
+
+    let z = x.add(&y);
+
+    exit_trace();
+    assert!(!is_tracing());
+
+    let trace_ctx = Rc::try_unwrap(ctx)
+        .expect("TraceContext still has references")
+        .into_inner();
+
+    let node = trace_ctx.get_node(z.id());
+    assert!(node.is_some(), "Operation should have been traced");
+
+    assert_eq!(z.to_vec(), vec![5.0, 7.0, 9.0]);
+}
+
+#[test]
+fn test_tracing_composition() {
+    use jax_rs::trace::{enter_trace, exit_trace, TraceContext};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    let ctx = Rc::new(RefCell::new(TraceContext::new("test".to_string())));
+
+    let x = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+
+    {
+        let mut ctx_mut = ctx.borrow_mut();
+        ctx_mut.register_input(x.id(), x.shape().clone(), x.dtype());
+    }
+
+    enter_trace(ctx.clone());
+
+    let x_squared = x.mul(&x);
+    let result = x_squared.sum_all_array();
+
+    exit_trace();
+
+    let trace_ctx = Rc::try_unwrap(ctx)
+        .expect("TraceContext still has references")
+        .into_inner();
+
+    assert!(trace_ctx.get_node(x_squared.id()).is_some());
+    assert!(trace_ctx.get_node(result.id()).is_some());
+
+    assert!((result.to_vec()[0] - 5.0).abs() < 0.001);
 }

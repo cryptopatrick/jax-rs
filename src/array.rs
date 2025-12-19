@@ -2,6 +2,15 @@
 
 use crate::{buffer::Buffer, DType, Device, Shape};
 use std::fmt;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Global counter for generating unique array IDs
+static ARRAY_ID_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+/// Generate a unique ID for an array
+fn next_array_id() -> usize {
+    ARRAY_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 /// A multidimensional numeric array.
 ///
@@ -34,6 +43,8 @@ pub struct Array {
     strides: Vec<usize>,
     /// Offset into the buffer (in elements)
     offset: usize,
+    /// Unique ID for tracing (pointer address)
+    id: usize,
 }
 
 impl Array {
@@ -52,7 +63,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::zeros(size, dtype, device);
         let strides = shape.default_strides();
-        Self { buffer, shape, strides, offset: 0 }
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Create a new array filled with ones.
@@ -62,7 +73,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::filled(1.0, size, dtype, device);
         let strides = shape.default_strides();
-        Self { buffer, shape, strides, offset: 0 }
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Create a new array filled with a specific value.
@@ -72,7 +83,7 @@ impl Array {
         let size = shape.size();
         let buffer = Buffer::filled(value, size, dtype, device);
         let strides = shape.default_strides();
-        Self { buffer, shape, strides, offset: 0 }
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Create an array from a flat Vec<f32> and shape.
@@ -98,13 +109,13 @@ impl Array {
         let device = crate::default_device();
         let buffer = Buffer::from_f32(data, device);
         let strides = shape.default_strides();
-        Self { buffer, shape, strides, offset: 0 }
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Create an array from a buffer and shape (internal use).
     pub(crate) fn from_buffer(buffer: Buffer, shape: Shape) -> Self {
         let strides = shape.default_strides();
-        Self { buffer, shape, strides, offset: 0 }
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Get the shape of the array.
@@ -135,6 +146,12 @@ impl Array {
     #[inline]
     pub fn size(&self) -> usize {
         self.shape.size()
+    }
+
+    /// Get the unique ID of this array (for tracing).
+    #[inline]
+    pub fn id(&self) -> usize {
+        self.id
     }
 
     /// Check if this is a scalar (0-dimensional array).
@@ -178,6 +195,7 @@ impl Array {
             shape: new_shape.clone(),
             strides: new_shape.default_strides(),
             offset: 0,
+            id: next_array_id(),
         }
     }
 

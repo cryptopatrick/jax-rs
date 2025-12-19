@@ -140,9 +140,9 @@ impl TraceContext {
         self.nodes.get(&array_id).cloned()
     }
 
-    /// Get a unique ID for an array (using its address).
+    /// Get a unique ID for an array (using its internal ID).
     fn array_id(array: &Array) -> usize {
-        array as *const Array as usize
+        array.id()
     }
 
     /// Finalize the trace and return the IR graph.
