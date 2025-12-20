@@ -307,6 +307,28 @@ impl Array {
     pub fn log1p(&self) -> Array {
         unary_op(self, Primitive::Log, |x| x.ln_1p())
     }
+
+    /// Safe reciprocal that returns 0 where x == 0.
+    ///
+    /// Returns 1/x where x != 0, and 0 where x == 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![2.0, 0.0, 4.0], Shape::new(vec![3]));
+    /// let b = a.reciprocal_no_nan();
+    /// assert_eq!(b.to_vec(), vec![0.5, 0.0, 0.25]);
+    /// ```
+    pub fn reciprocal_no_nan(&self) -> Array {
+        unary_op(self, Primitive::Reciprocal, |x| {
+            if x == 0.0 {
+                0.0
+            } else {
+                1.0 / x
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -385,6 +407,13 @@ mod tests {
         assert_abs_diff_eq!(b.to_vec()[0], 1.0, epsilon = 1e-6);
         assert_abs_diff_eq!(b.to_vec()[1], 0.5, epsilon = 1e-6);
         assert_abs_diff_eq!(b.to_vec()[2], 0.25, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_reciprocal_no_nan() {
+        let a = Array::from_vec(vec![2.0, 0.0, 4.0], Shape::new(vec![3]));
+        let b = a.reciprocal_no_nan();
+        assert_eq!(b.to_vec(), vec![0.5, 0.0, 0.25]);
     }
 
     #[test]

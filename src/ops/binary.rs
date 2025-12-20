@@ -155,6 +155,49 @@ impl Array {
     pub fn maximum(&self, other: &Array) -> Array {
         binary_op(self, other, Primitive::Max, |a, b| a.max(b))
     }
+
+    /// Safe division that returns 0 where division by zero would occur.
+    ///
+    /// Returns x / y where y != 0, and 0 where y == 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 0.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.divide_no_nan(&b);
+    /// assert_eq!(c.to_vec(), vec![0.5, 0.0, 1.0]);
+    /// ```
+    pub fn divide_no_nan(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| {
+            if b == 0.0 {
+                0.0
+            } else {
+                a / b
+            }
+        })
+    }
+
+    /// Squared difference: (a - b)^2.
+    ///
+    /// Useful for computing mean squared error and similar metrics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 1.0], Shape::new(vec![3]));
+    /// let c = a.squared_difference(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 0.0, 4.0]);
+    /// ```
+    pub fn squared_difference(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Sub, |a, b| {
+            let diff = a - b;
+            diff * diff
+        })
+    }
 }
 
 #[cfg(test)]
@@ -247,6 +290,22 @@ mod tests {
 
         let max_ab = a.maximum(&b);
         assert_eq!(max_ab.to_vec(), vec![2.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_divide_no_nan() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![2.0, 0.0, 3.0], Shape::new(vec![3]));
+        let c = a.divide_no_nan(&b);
+        assert_eq!(c.to_vec(), vec![0.5, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_squared_difference() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![2.0, 2.0, 1.0], Shape::new(vec![3]));
+        let c = a.squared_difference(&b);
+        assert_eq!(c.to_vec(), vec![1.0, 0.0, 4.0]);
     }
 
     #[test]

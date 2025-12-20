@@ -342,6 +342,154 @@ impl Array {
 
         Array::from_vec(result, self.shape().clone())
     }
+
+    /// Return the indices of the bins to which each value belongs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![0.2, 6.4, 3.0, 1.6], Shape::new(vec![4]));
+    /// let bins = Array::from_vec(vec![0.0, 1.0, 2.5, 4.0, 10.0], Shape::new(vec![5]));
+    /// let indices = x.digitize(&bins);
+    /// assert_eq!(indices, vec![1, 4, 3, 2]);
+    /// ```
+    pub fn digitize(&self, bins: &Array) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(bins.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let bin_edges = bins.to_vec();
+
+        data.iter()
+            .map(|&val| {
+                // Find the bin index using binary search
+                let mut left = 0;
+                let mut right = bin_edges.len();
+
+                while left < right {
+                    let mid = left + (right - left) / 2;
+                    if bin_edges[mid] <= val {
+                        left = mid + 1;
+                    } else {
+                        right = mid;
+                    }
+                }
+                left
+            })
+            .collect()
+    }
+
+    /// Compute the histogram of a dataset.
+    ///
+    /// Returns (hist, bin_edges) where hist contains the counts and bin_edges
+    /// contains the bin boundaries.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 1.0, 3.0, 2.0, 1.0], Shape::new(vec![6]));
+    /// let (hist, edges) = a.histogram(3, 0.0, 4.0);
+    /// assert_eq!(hist, vec![3, 2, 1]);
+    /// ```
+    pub fn histogram(&self, bins: usize, range_min: f32, range_max: f32) -> (Vec<usize>, Vec<f32>) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(bins > 0, "Number of bins must be positive");
+        assert!(range_max > range_min, "range_max must be > range_min");
+
+        let data = self.to_vec();
+        let bin_width = (range_max - range_min) / bins as f32;
+
+        // Create bin edges
+        let mut bin_edges = Vec::with_capacity(bins + 1);
+        for i in 0..=bins {
+            bin_edges.push(range_min + i as f32 * bin_width);
+        }
+
+        // Count values in each bin
+        let mut hist = vec![0; bins];
+        for &val in data.iter() {
+            if val >= range_min && val <= range_max {
+                let bin_idx = ((val - range_min) / bin_width).floor() as usize;
+                let bin_idx = bin_idx.min(bins - 1); // Handle edge case where val == range_max
+                hist[bin_idx] += 1;
+            }
+        }
+
+        (hist, bin_edges)
+    }
+
+    /// Count number of occurrences of each value in array of non-negative integers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 1.0, 3.0, 2.0, 1.0, 7.0], Shape::new(vec![7]));
+    /// let counts = a.bincount();
+    /// assert_eq!(counts, vec![1, 3, 1, 1, 0, 0, 0, 1]);
+    /// ```
+    pub fn bincount(&self) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        // Find the maximum value to determine array size
+        let max_val = data
+            .iter()
+            .map(|&x| x as usize)
+            .max()
+            .unwrap_or(0);
+
+        let mut counts = vec![0; max_val + 1];
+        for &val in data.iter() {
+            let idx = val as usize;
+            counts[idx] += 1;
+        }
+
+        counts
+    }
+
+    /// Count number of occurrences with optional weights.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 1.0, 2.0], Shape::new(vec![4]));
+    /// let weights = Array::from_vec(vec![0.3, 0.5, 0.2, 0.7], Shape::new(vec![4]));
+    /// let counts = a.bincount_weighted(&weights);
+    /// assert!((counts[0] - 0.3).abs() < 1e-6);
+    /// assert!((counts[1] - 0.7).abs() < 1e-6);
+    /// assert!((counts[2] - 0.7).abs() < 1e-6);
+    /// ```
+    pub fn bincount_weighted(&self, weights: &Array) -> Vec<f32> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(weights.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            self.size(),
+            weights.size(),
+            "Array and weights must have same size"
+        );
+
+        let data = self.to_vec();
+        let weight_data = weights.to_vec();
+
+        // Find the maximum value to determine array size
+        let max_val = data
+            .iter()
+            .map(|&x| x as usize)
+            .max()
+            .unwrap_or(0);
+
+        let mut counts = vec![0.0; max_val + 1];
+        for (i, &val) in data.iter().enumerate() {
+            let idx = val as usize;
+            counts[idx] += weight_data[i];
+        }
+
+        counts
+    }
 }
 
 #[cfg(test)]
@@ -450,5 +598,46 @@ mod tests {
         let b = Array::from_vec(vec![2.0, 4.0], Shape::new(vec![2]));
         let result = a.in1d(&b);
         assert_eq!(result.to_vec(), vec![0.0, 1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_digitize() {
+        let x = Array::from_vec(vec![0.2, 6.4, 3.0, 1.6], Shape::new(vec![4]));
+        let bins =
+            Array::from_vec(vec![0.0, 1.0, 2.5, 4.0, 10.0], Shape::new(vec![5]));
+        let indices = x.digitize(&bins);
+        assert_eq!(indices, vec![1, 4, 3, 2]);
+    }
+
+    #[test]
+    fn test_histogram() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 1.0, 3.0, 2.0, 1.0],
+            Shape::new(vec![6]),
+        );
+        let (hist, edges) = a.histogram(3, 0.0, 4.0);
+        assert_eq!(hist, vec![3, 2, 1]);
+        assert_eq!(edges.len(), 4); // bins + 1
+    }
+
+    #[test]
+    fn test_bincount() {
+        let a = Array::from_vec(
+            vec![0.0, 1.0, 1.0, 3.0, 2.0, 1.0, 7.0],
+            Shape::new(vec![7]),
+        );
+        let counts = a.bincount();
+        assert_eq!(counts, vec![1, 3, 1, 1, 0, 0, 0, 1]);
+    }
+
+    #[test]
+    fn test_bincount_weighted() {
+        let a = Array::from_vec(vec![0.0, 1.0, 1.0, 2.0], Shape::new(vec![4]));
+        let weights =
+            Array::from_vec(vec![0.3, 0.5, 0.2, 0.7], Shape::new(vec![4]));
+        let counts = a.bincount_weighted(&weights);
+        assert!((counts[0] - 0.3).abs() < 1e-6);
+        assert!((counts[1] - 0.7).abs() < 1e-6);
+        assert!((counts[2] - 0.7).abs() < 1e-6);
     }
 }

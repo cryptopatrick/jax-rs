@@ -188,6 +188,46 @@ impl Array {
         Array::from_vec(result_data, self.shape().clone())
     }
 
+    /// Clip values to a minimum value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
+    /// let clipped = a.clip_min(5.0);
+    /// assert_eq!(clipped.to_vec(), vec![5.0, 5.0, 10.0]);
+    /// ```
+    pub fn clip_min(&self, min: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let result_data: Vec<f32> =
+            data.iter().map(|&x| x.max(min)).collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
+
+    /// Clip values to a maximum value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
+    /// let clipped = a.clip_max(5.0);
+    /// assert_eq!(clipped.to_vec(), vec![1.0, 5.0, 5.0]);
+    /// ```
+    pub fn clip_max(&self, max: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let result_data: Vec<f32> =
+            data.iter().map(|&x| x.min(max)).collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
+
     /// Flip array along specified axis.
     ///
     /// # Examples
@@ -1153,6 +1193,144 @@ impl Array {
         // For higher dimensions, fall back to swapaxes
         self.swapaxes(source, destination)
     }
+
+    /// One-dimensional linear interpolation.
+    ///
+    /// Returns interpolated values at specified points using linear interpolation.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - x-coordinates at which to evaluate the interpolated values
+    /// * `xp` - x-coordinates of the data points (must be increasing)
+    /// * `fp` - y-coordinates of the data points
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let xp = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let fp = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+    /// let x = Array::from_vec(vec![1.5, 2.5], Shape::new(vec![2]));
+    /// let result = Array::interp(&x, &xp, &fp);
+    /// assert_eq!(result.to_vec(), vec![15.0, 25.0]);
+    /// ```
+    pub fn interp(x: &Array, xp: &Array, fp: &Array) -> Array {
+        assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(xp.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(fp.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            xp.size(),
+            fp.size(),
+            "xp and fp must have the same size"
+        );
+
+        let x_data = x.to_vec();
+        let xp_data = xp.to_vec();
+        let fp_data = fp.to_vec();
+
+        let result: Vec<f32> = x_data
+            .iter()
+            .map(|&xi| {
+                // Handle edge cases
+                if xi <= xp_data[0] {
+                    return fp_data[0];
+                }
+                if xi >= xp_data[xp_data.len() - 1] {
+                    return fp_data[fp_data.len() - 1];
+                }
+
+                // Find the interval containing xi
+                for i in 0..xp_data.len() - 1 {
+                    if xi >= xp_data[i] && xi <= xp_data[i + 1] {
+                        // Linear interpolation
+                        let t = (xi - xp_data[i]) / (xp_data[i + 1] - xp_data[i]);
+                        return fp_data[i] + t * (fp_data[i + 1] - fp_data[i]);
+                    }
+                }
+
+                fp_data[fp_data.len() - 1]
+            })
+            .collect();
+
+        Array::from_vec(result, x.shape().clone())
+    }
+
+    /// Linear interpolation between two arrays.
+    ///
+    /// Returns a + weight * (b - a)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 10.0, 20.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![100.0, 110.0, 120.0], Shape::new(vec![3]));
+    /// let result = a.lerp(&b, 0.5);
+    /// assert_eq!(result.to_vec(), vec![50.0, 60.0, 70.0]);
+    /// ```
+    pub fn lerp(&self, other: &Array, weight: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            self.shape(),
+            other.shape(),
+            "Arrays must have the same shape"
+        );
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+
+        let result: Vec<f32> = self_data
+            .iter()
+            .zip(other_data.iter())
+            .map(|(&a, &b)| a + weight * (b - a))
+            .collect();
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Linearly interpolate between two arrays element-wise with array weights.
+    ///
+    /// Returns a + weight * (b - a) where weight is an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 10.0, 20.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![100.0, 110.0, 120.0], Shape::new(vec![3]));
+    /// let weights = Array::from_vec(vec![0.0, 0.5, 1.0], Shape::new(vec![3]));
+    /// let result = a.lerp_array(&b, &weights);
+    /// assert_eq!(result.to_vec(), vec![0.0, 60.0, 120.0]);
+    /// ```
+    pub fn lerp_array(&self, other: &Array, weights: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(weights.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            self.shape(),
+            other.shape(),
+            "Arrays must have the same shape"
+        );
+        assert_eq!(
+            self.shape(),
+            weights.shape(),
+            "Arrays and weights must have the same shape"
+        );
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+        let weight_data = weights.to_vec();
+
+        let result: Vec<f32> = self_data
+            .iter()
+            .zip(other_data.iter())
+            .zip(weight_data.iter())
+            .map(|((&a, &b), &w)| a + w * (b - a))
+            .collect();
+
+        Array::from_vec(result, self.shape().clone())
+    }
 }
 
 #[cfg(test)]
@@ -1199,6 +1377,20 @@ mod tests {
         );
         let clipped = a.clip(0.0, 10.0);
         assert_eq!(clipped.to_vec(), vec![0.0, 0.0, 5.0, 10.0, 10.0]);
+    }
+
+    #[test]
+    fn test_clip_min() {
+        let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
+        let clipped = a.clip_min(5.0);
+        assert_eq!(clipped.to_vec(), vec![5.0, 5.0, 10.0]);
+    }
+
+    #[test]
+    fn test_clip_max() {
+        let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
+        let clipped = a.clip_max(5.0);
+        assert_eq!(clipped.to_vec(), vec![1.0, 5.0, 5.0]);
     }
 
     #[test]
@@ -1458,5 +1650,44 @@ mod tests {
         );
         let moved = a.moveaxis(2, 0);
         assert_eq!(moved.shape().as_slice(), &[3, 1, 2]);
+    }
+
+    #[test]
+    fn test_interp() {
+        let xp = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let fp = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let x = Array::from_vec(vec![1.5, 2.5], Shape::new(vec![2]));
+        let result = Array::interp(&x, &xp, &fp);
+        assert_eq!(result.to_vec(), vec![15.0, 25.0]);
+
+        // Test edge cases
+        let x_edge = Array::from_vec(vec![0.5, 3.5], Shape::new(vec![2]));
+        let result_edge = Array::interp(&x_edge, &xp, &fp);
+        assert_eq!(result_edge.to_vec(), vec![10.0, 30.0]);
+    }
+
+    #[test]
+    fn test_lerp() {
+        let a = Array::from_vec(vec![0.0, 10.0, 20.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![100.0, 110.0, 120.0], Shape::new(vec![3]));
+        let result = a.lerp(&b, 0.5);
+        assert_eq!(result.to_vec(), vec![50.0, 60.0, 70.0]);
+
+        // Test with weight = 0.0 (should return a)
+        let result_0 = a.lerp(&b, 0.0);
+        assert_eq!(result_0.to_vec(), a.to_vec());
+
+        // Test with weight = 1.0 (should return b)
+        let result_1 = a.lerp(&b, 1.0);
+        assert_eq!(result_1.to_vec(), b.to_vec());
+    }
+
+    #[test]
+    fn test_lerp_array() {
+        let a = Array::from_vec(vec![0.0, 10.0, 20.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![100.0, 110.0, 120.0], Shape::new(vec![3]));
+        let weights = Array::from_vec(vec![0.0, 0.5, 1.0], Shape::new(vec![3]));
+        let result = a.lerp_array(&b, &weights);
+        assert_eq!(result.to_vec(), vec![0.0, 60.0, 120.0]);
     }
 }

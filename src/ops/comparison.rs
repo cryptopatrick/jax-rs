@@ -217,6 +217,193 @@ impl Array {
         let data = self.to_vec();
         data.iter().filter(|&&x| x != 0.0).count()
     }
+
+    /// Test if two arrays are element-wise equal within a tolerance.
+    ///
+    /// Returns true if all elements satisfy: |a - b| <= atol + rtol * |b|
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - Array to compare with
+    /// * `rtol` - Relative tolerance
+    /// * `atol` - Absolute tolerance
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0001, 2.0001, 3.0001], Shape::new(vec![3]));
+    /// assert!(a.allclose(&b, 1e-3, 1e-3));
+    /// assert!(!a.allclose(&b, 1e-5, 1e-5));
+    /// ```
+    pub fn allclose(&self, other: &Array, rtol: f32, atol: f32) -> bool {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        // Check if shapes are broadcast-compatible
+        let result_shape = match self.shape().broadcast_with(other.shape()) {
+            Some(shape) => shape,
+            None => return false,
+        };
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+
+        if self.shape() == other.shape() {
+            // Same shape - simple element-wise comparison
+            self_data.iter().zip(other_data.iter()).all(|(&a, &b)| {
+                let diff = (a - b).abs();
+                diff <= atol + rtol * b.abs()
+            })
+        } else {
+            // Need broadcasting
+            let size = result_shape.size();
+            (0..size).all(|i| {
+                let self_idx =
+                    crate::ops::binary::broadcast_index(i, &result_shape, self.shape());
+                let other_idx =
+                    crate::ops::binary::broadcast_index(i, &result_shape, other.shape());
+                let a = self_data[self_idx];
+                let b = other_data[other_idx];
+                let diff = (a - b).abs();
+                diff <= atol + rtol * b.abs()
+            })
+        }
+    }
+
+    /// Element-wise test if values are close within a tolerance.
+    ///
+    /// Returns an array of 1.0 where |a - b| <= atol + rtol * |b|, 0.0 otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0001, 2.1, 3.0001], Shape::new(vec![3]));
+    /// let c = a.isclose(&b, 1e-3, 1e-3);
+    /// assert_eq!(c.to_vec(), vec![1.0, 0.0, 1.0]);
+    /// ```
+    pub fn isclose(&self, other: &Array, rtol: f32, atol: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        // Check if shapes are broadcast-compatible
+        let result_shape = self
+            .shape()
+            .broadcast_with(other.shape())
+            .expect("Shapes are not broadcast-compatible");
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+
+        let result_data: Vec<f32> = if self.shape() == other.shape() {
+            // Same shape - simple element-wise operation
+            self_data
+                .iter()
+                .zip(other_data.iter())
+                .map(|(&a, &b)| {
+                    let diff = (a - b).abs();
+                    if diff <= atol + rtol * b.abs() {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        } else {
+            // Need broadcasting
+            let size = result_shape.size();
+            (0..size)
+                .map(|i| {
+                    let self_idx =
+                        crate::ops::binary::broadcast_index(i, &result_shape, self.shape());
+                    let other_idx =
+                        crate::ops::binary::broadcast_index(i, &result_shape, other.shape());
+                    let a = self_data[self_idx];
+                    let b = other_data[other_idx];
+                    let diff = (a - b).abs();
+                    if diff <= atol + rtol * b.abs() {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .collect()
+        };
+
+        let buffer = Buffer::from_f32(result_data, Device::Cpu);
+        Array::from_buffer(buffer, result_shape)
+    }
+
+    /// Test if two arrays have the same shape and elements.
+    ///
+    /// This is exact equality - for approximate equality use `allclose`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = Array::from_vec(vec![1.0, 2.0, 3.1], Shape::new(vec![3]));
+    /// assert!(a.array_equal(&b));
+    /// assert!(!a.array_equal(&c));
+    /// ```
+    pub fn array_equal(&self, other: &Array) -> bool {
+        if self.shape() != other.shape() {
+            return false;
+        }
+        if self.dtype() != other.dtype() {
+            return false;
+        }
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+        self_data == other_data
+    }
+
+    /// Test if arrays can be broadcast to the same shape and are equal.
+    ///
+    /// Unlike `array_equal`, this allows broadcasting.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![1, 3]));
+    /// assert!(a.array_equiv(&b));
+    /// ```
+    pub fn array_equiv(&self, other: &Array) -> bool {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        // Check if shapes are broadcast-compatible
+        let result_shape = match self.shape().broadcast_with(other.shape()) {
+            Some(shape) => shape,
+            None => return false,
+        };
+
+        let self_data = self.to_vec();
+        let other_data = other.to_vec();
+
+        if self.shape() == other.shape() {
+            // Same shape - simple element-wise comparison
+            self_data == other_data
+        } else {
+            // Need broadcasting
+            let size = result_shape.size();
+            (0..size).all(|i| {
+                let self_idx =
+                    crate::ops::binary::broadcast_index(i, &result_shape, self.shape());
+                let other_idx =
+                    crate::ops::binary::broadcast_index(i, &result_shape, other.shape());
+                self_data[self_idx] == other_data[other_idx]
+            })
+        }
+    }
 }
 
 #[cfg(test)]
@@ -277,5 +464,49 @@ mod tests {
         let b = Array::from_vec(vec![2.0], Shape::new(vec![1]));
         let c = a.lt(&b);
         assert_eq!(c.to_vec(), vec![1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_allclose() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![1.0001, 2.0001, 3.0001], Shape::new(vec![3]));
+        assert!(a.allclose(&b, 1e-3, 1e-3));
+        assert!(!a.allclose(&b, 1e-5, 1e-5));
+
+        // Test with broadcasting
+        let c = Array::from_vec(vec![1.0001], Shape::new(vec![1]));
+        let d = Array::from_vec(vec![1.0, 1.0, 1.0], Shape::new(vec![3]));
+        assert!(c.allclose(&d, 1e-3, 1e-3));
+    }
+
+    #[test]
+    fn test_isclose() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![1.0001, 2.1, 3.0001], Shape::new(vec![3]));
+        let c = a.isclose(&b, 1e-3, 1e-3);
+        assert_eq!(c.to_vec(), vec![1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_array_equal() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let c = Array::from_vec(vec![1.0, 2.0, 3.1], Shape::new(vec![3]));
+        assert!(a.array_equal(&b));
+        assert!(!a.array_equal(&c));
+
+        // Different shapes
+        let d = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![1, 3]));
+        assert!(!a.array_equal(&d));
+    }
+
+    #[test]
+    fn test_array_equiv() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![1, 3]));
+        assert!(a.array_equiv(&b));
+
+        let c = Array::from_vec(vec![1.0, 2.0, 3.1], Shape::new(vec![1, 3]));
+        assert!(!a.array_equiv(&c));
     }
 }
