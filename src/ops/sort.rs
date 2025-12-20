@@ -198,6 +198,150 @@ impl Array {
             counts,
         )
     }
+
+    /// Find the set difference of two arrays.
+    ///
+    /// Returns the unique values in the first array that are not in the second array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let b = Array::from_vec(vec![2.0, 4.0, 5.0], Shape::new(vec![3]));
+    /// let diff = a.setdiff1d(&b);
+    /// assert_eq!(diff.to_vec(), vec![1.0, 3.0]);
+    /// ```
+    pub fn setdiff1d(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let self_unique = self.unique();
+        let other_data = other.to_vec();
+
+        let result: Vec<f32> = self_unique
+            .to_vec()
+            .into_iter()
+            .filter(|&val| !other_data.iter().any(|&x| (x - val).abs() < 1e-7))
+            .collect();
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Find the union of two arrays.
+    ///
+    /// Returns the unique values that are in either of the two arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let union = a.union1d(&b);
+    /// assert_eq!(union.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    /// ```
+    pub fn union1d(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let mut combined = self.to_vec();
+        combined.extend(other.to_vec());
+
+        let temp = Array::from_vec(combined, Shape::new(vec![self.size() + other.size()]));
+        temp.unique()
+    }
+
+    /// Find the intersection of two arrays.
+    ///
+    /// Returns the unique values that are in both arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let intersect = a.intersect1d(&b);
+    /// assert_eq!(intersect.to_vec(), vec![2.0, 3.0]);
+    /// ```
+    pub fn intersect1d(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let self_unique = self.unique();
+        let other_data = other.to_vec();
+
+        let result: Vec<f32> = self_unique
+            .to_vec()
+            .into_iter()
+            .filter(|&val| other_data.iter().any(|&x| (x - val).abs() < 1e-7))
+            .collect();
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Find the exclusive-or of two arrays.
+    ///
+    /// Returns the unique values that are in exactly one of the two arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let xor = a.setxor1d(&b);
+    /// assert_eq!(xor.to_vec(), vec![1.0, 4.0]);
+    /// ```
+    pub fn setxor1d(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let union = self.union1d(other);
+        let intersect = self.intersect1d(other);
+        union.setdiff1d(&intersect)
+    }
+
+    /// Test whether each element of a 1D array is also present in a second array.
+    ///
+    /// Returns a boolean-like array (1.0 for true, 0.0 for false).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let b = Array::from_vec(vec![2.0, 4.0], Shape::new(vec![2]));
+    /// let result = a.in1d(&b);
+    /// assert_eq!(result.to_vec(), vec![0.0, 1.0, 0.0, 1.0]);
+    /// ```
+    pub fn in1d(&self, test_elements: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            test_elements.dtype(),
+            DType::Float32,
+            "Only Float32 supported"
+        );
+
+        let data = self.to_vec();
+        let test_data = test_elements.to_vec();
+
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&val| {
+                if test_data.iter().any(|&x| (x - val).abs() < 1e-7) {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+
+        Array::from_vec(result, self.shape().clone())
+    }
 }
 
 #[cfg(test)]
@@ -266,5 +410,45 @@ mod tests {
         let (values, counts) = a.unique_counts();
         assert_eq!(values.to_vec(), vec![1.0, 2.0, 3.0]);
         assert_eq!(counts, vec![3, 2, 1]);
+    }
+
+    #[test]
+    fn test_setdiff1d() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let b = Array::from_vec(vec![2.0, 4.0, 5.0], Shape::new(vec![3]));
+        let diff = a.setdiff1d(&b);
+        assert_eq!(diff.to_vec(), vec![1.0, 3.0]);
+    }
+
+    #[test]
+    fn test_union1d() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+        let union = a.union1d(&b);
+        assert_eq!(union.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_intersect1d() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+        let intersect = a.intersect1d(&b);
+        assert_eq!(intersect.to_vec(), vec![2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_setxor1d() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+        let xor = a.setxor1d(&b);
+        assert_eq!(xor.to_vec(), vec![1.0, 4.0]);
+    }
+
+    #[test]
+    fn test_in1d() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let b = Array::from_vec(vec![2.0, 4.0], Shape::new(vec![2]));
+        let result = a.in1d(&b);
+        assert_eq!(result.to_vec(), vec![0.0, 1.0, 0.0, 1.0]);
     }
 }
