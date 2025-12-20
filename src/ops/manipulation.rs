@@ -736,6 +736,182 @@ impl Array {
 
         Array::from_vec(result, new_shape)
     }
+
+    /// Take elements from array along an axis at specified indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0], Shape::new(vec![4]));
+    /// let indices = vec![0, 2, 3];
+    /// let result = a.take(&indices);
+    /// assert_eq!(result.to_vec(), vec![10.0, 30.0, 40.0]);
+    /// ```
+    pub fn take(&self, indices: &[usize]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        let result: Vec<f32> = indices
+            .iter()
+            .map(|&idx| {
+                assert!(idx < data.len(), "Index {} out of bounds", idx);
+                data[idx]
+            })
+            .collect();
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Return indices of non-zero elements.
+    ///
+    /// Returns indices where elements are non-zero (not equal to 0.0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 0.0, 3.0, 0.0], Shape::new(vec![5]));
+    /// let indices = a.nonzero();
+    /// assert_eq!(indices, vec![1, 3]);
+    /// ```
+    pub fn nonzero(&self) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        data.iter()
+            .enumerate()
+            .filter(|(_, &val)| val != 0.0)
+            .map(|(idx, _)| idx)
+            .collect()
+    }
+
+    /// Return indices where condition is true (non-zero).
+    ///
+    /// Similar to nonzero but returns 2D array of indices for multi-dimensional arrays.
+    /// For 1D arrays, returns a list of indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 0.0, 1.0], Shape::new(vec![4]));
+    /// let indices = a.argwhere();
+    /// assert_eq!(indices, vec![1, 3]);
+    /// ```
+    pub fn argwhere(&self) -> Vec<usize> {
+        self.nonzero()
+    }
+
+    /// Select elements from array based on condition mask.
+    ///
+    /// Returns a 1D array of elements where the condition is true (non-zero).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0], Shape::new(vec![4]));
+    /// let condition = Array::from_vec(vec![1.0, 0.0, 1.0, 0.0], Shape::new(vec![4]));
+    /// let result = a.compress(&condition);
+    /// assert_eq!(result.to_vec(), vec![10.0, 30.0]);
+    /// ```
+    pub fn compress(&self, condition: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            condition.dtype(),
+            DType::Float32,
+            "Only Float32 supported"
+        );
+        assert_eq!(
+            self.size(),
+            condition.size(),
+            "Array and condition must have same size"
+        );
+
+        let data = self.to_vec();
+        let cond_data = condition.to_vec();
+
+        let result: Vec<f32> = data
+            .iter()
+            .zip(cond_data.iter())
+            .filter(|(_, &c)| c != 0.0)
+            .map(|(&val, _)| val)
+            .collect();
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Choose elements from arrays based on index array.
+    ///
+    /// For each element in the index array, select from the corresponding choice array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let choices = vec![
+    ///     Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3])),
+    ///     Array::from_vec(vec![100.0, 200.0, 300.0], Shape::new(vec![3])),
+    /// ];
+    /// let indices = vec![0, 1, 0];
+    /// let result = Array::choose(&indices, &choices);
+    /// assert_eq!(result.to_vec(), vec![10.0, 200.0, 30.0]);
+    /// ```
+    pub fn choose(indices: &[usize], choices: &[Array]) -> Array {
+        assert!(!choices.is_empty(), "Must provide at least one choice");
+        let size = choices[0].size();
+
+        for choice in choices.iter() {
+            assert_eq!(
+                choice.size(),
+                size,
+                "All choices must have the same size"
+            );
+        }
+
+        assert_eq!(
+            indices.len(),
+            size,
+            "Indices must have same length as choices"
+        );
+
+        let choice_data: Vec<Vec<f32>> =
+            choices.iter().map(|c| c.to_vec()).collect();
+
+        let result: Vec<f32> = (0..size)
+            .map(|i| {
+                let choice_idx = indices[i];
+                assert!(
+                    choice_idx < choices.len(),
+                    "Index {} out of bounds",
+                    choice_idx
+                );
+                choice_data[choice_idx][i]
+            })
+            .collect();
+
+        Array::from_vec(result, choices[0].shape().clone())
+    }
+
+    /// Extract elements from array where condition is true.
+    ///
+    /// Similar to compress, but condition can be a boolean-like array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let condition = Array::from_vec(vec![1.0, 0.0, 1.0, 0.0, 1.0], Shape::new(vec![5]));
+    /// let result = a.extract(&condition);
+    /// assert_eq!(result.to_vec(), vec![1.0, 3.0, 5.0]);
+    /// ```
+    pub fn extract(&self, condition: &Array) -> Array {
+        self.compress(condition)
+    }
 }
 
 #[cfg(test)]
@@ -927,5 +1103,67 @@ mod tests {
         let b = a.broadcast_to(Shape::new(vec![2, 3]));
         assert_eq!(b.shape().as_slice(), &[2, 3]);
         assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_take() {
+        let a = Array::from_vec(
+            vec![10.0, 20.0, 30.0, 40.0, 50.0],
+            Shape::new(vec![5]),
+        );
+        let indices = vec![0, 2, 4];
+        let result = a.take(&indices);
+        assert_eq!(result.to_vec(), vec![10.0, 30.0, 50.0]);
+    }
+
+    #[test]
+    fn test_nonzero() {
+        let a = Array::from_vec(
+            vec![0.0, 1.0, 0.0, 3.0, 0.0, 5.0],
+            Shape::new(vec![6]),
+        );
+        let indices = a.nonzero();
+        assert_eq!(indices, vec![1, 3, 5]);
+    }
+
+    #[test]
+    fn test_argwhere() {
+        let a = Array::from_vec(vec![0.0, 1.0, 0.0, 1.0], Shape::new(vec![4]));
+        let indices = a.argwhere();
+        assert_eq!(indices, vec![1, 3]);
+    }
+
+    #[test]
+    fn test_compress() {
+        let a = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0], Shape::new(vec![4]));
+        let condition =
+            Array::from_vec(vec![1.0, 0.0, 1.0, 0.0], Shape::new(vec![4]));
+        let result = a.compress(&condition);
+        assert_eq!(result.to_vec(), vec![10.0, 30.0]);
+    }
+
+    #[test]
+    fn test_choose() {
+        let choices = vec![
+            Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3])),
+            Array::from_vec(vec![100.0, 200.0, 300.0], Shape::new(vec![3])),
+        ];
+        let indices = vec![0, 1, 0];
+        let result = Array::choose(&indices, &choices);
+        assert_eq!(result.to_vec(), vec![10.0, 200.0, 30.0]);
+    }
+
+    #[test]
+    fn test_extract() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            Shape::new(vec![5]),
+        );
+        let condition = Array::from_vec(
+            vec![1.0, 0.0, 1.0, 0.0, 1.0],
+            Shape::new(vec![5]),
+        );
+        let result = a.extract(&condition);
+        assert_eq!(result.to_vec(), vec![1.0, 3.0, 5.0]);
     }
 }
