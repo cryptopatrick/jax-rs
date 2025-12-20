@@ -597,6 +597,145 @@ impl Array {
         let result: Vec<f32> = data.iter().map(|&x| x * scale).collect();
         Array::from_vec(result, self.shape().clone())
     }
+
+    /// Flatten array to 1D.
+    ///
+    /// Returns a 1D array containing all elements in row-major order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let flat = a.ravel();
+    /// assert_eq!(flat.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    /// assert_eq!(flat.shape().as_slice(), &[4]);
+    /// ```
+    pub fn ravel(&self) -> Array {
+        let size = self.size();
+        Array::from_vec(self.to_vec(), Shape::new(vec![size]))
+    }
+
+    /// Flatten array to 1D (alias for ravel).
+    ///
+    /// Returns a 1D array containing all elements in row-major order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let flat = a.flatten();
+    /// assert_eq!(flat.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    /// ```
+    pub fn flatten(&self) -> Array {
+        self.ravel()
+    }
+
+    /// View array with at least 1D.
+    ///
+    /// Scalar (0D) arrays are converted to 1D arrays with shape [1].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0], Shape::new(vec![]));
+    /// let b = a.atleast_1d();
+    /// assert_eq!(b.shape().as_slice(), &[1]);
+    /// ```
+    pub fn atleast_1d(&self) -> Array {
+        if self.shape().ndim() == 0 {
+            Array::from_vec(self.to_vec(), Shape::new(vec![1]))
+        } else {
+            self.clone()
+        }
+    }
+
+    /// View array with at least 2D.
+    ///
+    /// Arrays with fewer than 2 dimensions are expanded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.atleast_2d();
+    /// assert_eq!(b.shape().as_slice(), &[1, 3]);
+    /// ```
+    pub fn atleast_2d(&self) -> Array {
+        match self.shape().ndim() {
+            0 => Array::from_vec(self.to_vec(), Shape::new(vec![1, 1])),
+            1 => {
+                let n = self.shape().as_slice()[0];
+                Array::from_vec(self.to_vec(), Shape::new(vec![1, n]))
+            }
+            _ => self.clone(),
+        }
+    }
+
+    /// View array with at least 3D.
+    ///
+    /// Arrays with fewer than 3 dimensions are expanded.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = a.atleast_3d();
+    /// assert_eq!(b.shape().as_slice(), &[1, 2, 1]);
+    /// ```
+    pub fn atleast_3d(&self) -> Array {
+        match self.shape().ndim() {
+            0 => Array::from_vec(self.to_vec(), Shape::new(vec![1, 1, 1])),
+            1 => {
+                let n = self.shape().as_slice()[0];
+                Array::from_vec(self.to_vec(), Shape::new(vec![1, n, 1]))
+            }
+            2 => {
+                let dims = self.shape().as_slice();
+                Array::from_vec(self.to_vec(), Shape::new(vec![dims[0], dims[1], 1]))
+            }
+            _ => self.clone(),
+        }
+    }
+
+    /// Broadcast array to a new shape.
+    ///
+    /// The new shape must be broadcast-compatible with the current shape.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.broadcast_to(Shape::new(vec![2, 3]));
+    /// assert_eq!(b.shape().as_slice(), &[2, 3]);
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
+    /// ```
+    pub fn broadcast_to(&self, new_shape: Shape) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        // Check broadcast compatibility
+        let _result_shape = self
+            .shape()
+            .broadcast_with(&new_shape)
+            .expect("Shapes are not broadcast-compatible");
+
+        let data = self.to_vec();
+        let size = new_shape.size();
+        let mut result = Vec::with_capacity(size);
+
+        for i in 0..size {
+            let src_idx =
+                crate::ops::binary::broadcast_index(i, &new_shape, self.shape());
+            result.push(data[src_idx]);
+        }
+
+        Array::from_vec(result, new_shape)
+    }
 }
 
 #[cfg(test)]
@@ -721,5 +860,72 @@ mod tests {
         let b = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
         let clipped2 = b.clip_by_norm(5.0);
         assert_eq!(clipped2.to_vec(), vec![1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_ravel() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let flat = a.ravel();
+        assert_eq!(flat.shape().as_slice(), &[6]);
+        assert_eq!(flat.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_flatten() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let flat = a.flatten();
+        assert_eq!(flat.shape().as_slice(), &[4]);
+        assert_eq!(flat.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_atleast_1d() {
+        // Scalar to 1D
+        let a = Array::from_vec(vec![5.0], Shape::new(vec![]));
+        let b = a.atleast_1d();
+        assert_eq!(b.shape().as_slice(), &[1]);
+
+        // Already 1D
+        let c = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+        let d = c.atleast_1d();
+        assert_eq!(d.shape().as_slice(), &[2]);
+    }
+
+    #[test]
+    fn test_atleast_2d() {
+        // 1D to 2D
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = a.atleast_2d();
+        assert_eq!(b.shape().as_slice(), &[1, 3]);
+
+        // Already 2D
+        let c = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![1, 2]));
+        let d = c.atleast_2d();
+        assert_eq!(d.shape().as_slice(), &[1, 2]);
+    }
+
+    #[test]
+    fn test_atleast_3d() {
+        // 1D to 3D
+        let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+        let b = a.atleast_3d();
+        assert_eq!(b.shape().as_slice(), &[1, 2, 1]);
+
+        // 2D to 3D
+        let c = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![1, 2]));
+        let d = c.atleast_3d();
+        assert_eq!(d.shape().as_slice(), &[1, 2, 1]);
+    }
+
+    #[test]
+    fn test_broadcast_to() {
+        // Broadcast 1D to 2D
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = a.broadcast_to(Shape::new(vec![2, 3]));
+        assert_eq!(b.shape().as_slice(), &[2, 3]);
+        assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
     }
 }
