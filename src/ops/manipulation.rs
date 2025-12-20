@@ -459,6 +459,144 @@ impl Array {
 
         panic!("pad_reflect only supports 1D and 2D arrays for now");
     }
+
+    /// Replace NaN and infinity values with specified numbers.
+    ///
+    /// # Arguments
+    ///
+    /// * `nan` - Value to replace NaN with (default 0.0)
+    /// * `posinf` - Value to replace positive infinity with (default large positive value)
+    /// * `neginf` - Value to replace negative infinity with (default large negative value)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, f32::INFINITY, -f32::INFINITY], Shape::new(vec![4]));
+    /// let result = a.nan_to_num(0.0, 1e10, -1e10);
+    /// assert_eq!(result.to_vec()[0], 1.0);
+    /// assert_eq!(result.to_vec()[1], 0.0);
+    /// assert_eq!(result.to_vec()[2], 1e10);
+    /// assert_eq!(result.to_vec()[3], -1e10);
+    /// ```
+    pub fn nan_to_num(&self, nan: f32, posinf: f32, neginf: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| {
+                if x.is_nan() {
+                    nan
+                } else if x.is_infinite() && x > 0.0 {
+                    posinf
+                } else if x.is_infinite() && x < 0.0 {
+                    neginf
+                } else {
+                    x
+                }
+            })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Check for NaN values element-wise.
+    ///
+    /// Returns an array with 1.0 where NaN, 0.0 otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, f32::NAN], Shape::new(vec![4]));
+    /// let result = a.isnan();
+    /// assert_eq!(result.to_vec(), vec![0.0, 1.0, 0.0, 1.0]);
+    /// ```
+    pub fn isnan(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| if x.is_nan() { 1.0 } else { 0.0 })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Check for infinity values element-wise.
+    ///
+    /// Returns an array with 1.0 where infinity (positive or negative), 0.0 otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::INFINITY, -f32::INFINITY, 3.0], Shape::new(vec![4]));
+    /// let result = a.isinf();
+    /// assert_eq!(result.to_vec(), vec![0.0, 1.0, 1.0, 0.0]);
+    /// ```
+    pub fn isinf(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| if x.is_infinite() { 1.0 } else { 0.0 })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Check for finite values element-wise.
+    ///
+    /// Returns an array with 1.0 where finite, 0.0 otherwise (NaN or infinity).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, f32::INFINITY, 3.0], Shape::new(vec![4]));
+    /// let result = a.isfinite();
+    /// assert_eq!(result.to_vec(), vec![1.0, 0.0, 0.0, 1.0]);
+    /// ```
+    pub fn isfinite(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| if x.is_finite() { 1.0 } else { 0.0 })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Clip array values by L2 norm.
+    ///
+    /// If the L2 norm exceeds max_norm, scales the array down to have that norm.
+    /// Useful for gradient clipping in neural networks.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let clipped = a.clip_by_norm(2.0);
+    /// // Original norm is 5.0, should be scaled to 2.0
+    /// let result = clipped.to_vec();
+    /// assert!((result[0] - 1.2).abs() < 1e-5);
+    /// assert!((result[1] - 1.6).abs() < 1e-5);
+    /// ```
+    pub fn clip_by_norm(&self, max_norm: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        // Compute L2 norm
+        let norm: f32 = data.iter().map(|&x| x * x).sum::<f32>().sqrt();
+
+        if norm <= max_norm {
+            return self.clone();
+        }
+
+        // Scale down to max_norm
+        let scale = max_norm / norm;
+        let result: Vec<f32> = data.iter().map(|&x| x * scale).collect();
+        Array::from_vec(result, self.shape().clone())
+    }
 }
 
 #[cfg(test)]
@@ -522,5 +660,66 @@ mod tests {
         );
         let flipped = a.flip(0);
         assert_eq!(flipped.to_vec(), vec![5.0, 6.0, 3.0, 4.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn test_nan_to_num() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, f32::INFINITY, -f32::INFINITY, 5.0],
+            Shape::new(vec![5]),
+        );
+        let result = a.nan_to_num(0.0, 1e10, -1e10);
+        assert_eq!(result.to_vec()[0], 1.0);
+        assert_eq!(result.to_vec()[1], 0.0);
+        assert_eq!(result.to_vec()[2], 1e10);
+        assert_eq!(result.to_vec()[3], -1e10);
+        assert_eq!(result.to_vec()[4], 5.0);
+    }
+
+    #[test]
+    fn test_isnan() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, f32::NAN, 5.0],
+            Shape::new(vec![5]),
+        );
+        let result = a.isnan();
+        assert_eq!(result.to_vec(), vec![0.0, 1.0, 0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_isinf() {
+        let a = Array::from_vec(
+            vec![1.0, f32::INFINITY, -f32::INFINITY, 3.0],
+            Shape::new(vec![4]),
+        );
+        let result = a.isinf();
+        assert_eq!(result.to_vec(), vec![0.0, 1.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_isfinite() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, f32::INFINITY, 3.0],
+            Shape::new(vec![4]),
+        );
+        let result = a.isfinite();
+        assert_eq!(result.to_vec(), vec![1.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_clip_by_norm() {
+        // Test case 1: norm exceeds max_norm
+        let a = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+        let clipped = a.clip_by_norm(2.0);
+        let result = clipped.to_vec();
+        // Original norm is 5.0, should be scaled to 2.0
+        // scale = 2.0 / 5.0 = 0.4
+        assert!((result[0] - 1.2).abs() < 1e-5);
+        assert!((result[1] - 1.6).abs() < 1e-5);
+
+        // Test case 2: norm is already below max_norm
+        let b = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
+        let clipped2 = b.clip_by_norm(5.0);
+        assert_eq!(clipped2.to_vec(), vec![1.0, 1.0]);
     }
 }
