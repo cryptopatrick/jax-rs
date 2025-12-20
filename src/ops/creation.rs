@@ -450,6 +450,172 @@ impl Array {
 
         (xx, yy)
     }
+
+    /// Generate arrays of indices for each dimension.
+    ///
+    /// Returns a vector of arrays, one for each dimension, containing the indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let indices = Array::indices(&[2, 3]);
+    /// assert_eq!(indices[0].shape().as_slice(), &[2, 3]);
+    /// assert_eq!(indices[1].shape().as_slice(), &[2, 3]);
+    /// ```
+    pub fn indices(dimensions: &[usize]) -> Vec<Array> {
+        let total_size: usize = dimensions.iter().product();
+        let mut result = Vec::with_capacity(dimensions.len());
+
+        for (dim_idx, &dim_size) in dimensions.iter().enumerate() {
+            let mut data = Vec::with_capacity(total_size);
+
+            // Calculate stride for this dimension
+            let stride: usize = dimensions.iter().skip(dim_idx + 1).product();
+
+            for i in 0..total_size {
+                let idx = (i / stride) % dim_size;
+                data.push(idx as f32);
+            }
+
+            result.push(Array::from_vec(data, Shape::new(dimensions.to_vec())));
+        }
+
+        result
+    }
+
+    /// Convert a flat index to multi-dimensional coordinates.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let shape = Shape::new(vec![3, 4]);
+    /// let coords = Array::unravel_index(5, &shape);
+    /// assert_eq!(coords, vec![1, 1]);
+    /// ```
+    pub fn unravel_index(index: usize, shape: &Shape) -> Vec<usize> {
+        let dims = shape.as_slice();
+        let mut coords = vec![0; dims.len()];
+        let mut idx = index;
+
+        for i in (0..dims.len()).rev() {
+            coords[i] = idx % dims[i];
+            idx /= dims[i];
+        }
+
+        coords
+    }
+
+    /// Convert multi-dimensional coordinates to a flat index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let shape = Shape::new(vec![3, 4]);
+    /// let index = Array::ravel_multi_index(&[1, 2], &shape);
+    /// assert_eq!(index, 6);
+    /// ```
+    pub fn ravel_multi_index(multi_index: &[usize], shape: &Shape) -> usize {
+        let dims = shape.as_slice();
+        assert_eq!(
+            multi_index.len(),
+            dims.len(),
+            "Index dimensions must match shape"
+        );
+
+        let mut index = 0;
+        let mut stride = 1;
+
+        for i in (0..dims.len()).rev() {
+            assert!(
+                multi_index[i] < dims[i],
+                "Index out of bounds at dimension {}", i
+            );
+            index += multi_index[i] * stride;
+            stride *= dims[i];
+        }
+
+        index
+    }
+
+    /// Return indices for the main diagonal of an n-by-n array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let (rows, cols) = Array::diag_indices(3);
+    /// assert_eq!(rows, vec![0, 1, 2]);
+    /// assert_eq!(cols, vec![0, 1, 2]);
+    /// ```
+    pub fn diag_indices(n: usize) -> (Vec<usize>, Vec<usize>) {
+        let indices: Vec<usize> = (0..n).collect();
+        (indices.clone(), indices)
+    }
+
+    /// Return indices for the lower triangle of an n-by-n array.
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - Size of the arrays for which the indices are returned
+    /// * `k` - Diagonal offset (0 for main diagonal, positive for above, negative for below)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let (rows, cols) = Array::tril_indices(3, 0);
+    /// assert_eq!(rows, vec![0, 1, 1, 2, 2, 2]);
+    /// assert_eq!(cols, vec![0, 0, 1, 0, 1, 2]);
+    /// ```
+    pub fn tril_indices(n: usize, k: isize) -> (Vec<usize>, Vec<usize>) {
+        let mut rows = Vec::new();
+        let mut cols = Vec::new();
+
+        for i in 0..n {
+            for j in 0..n {
+                if (j as isize) <= (i as isize + k) {
+                    rows.push(i);
+                    cols.push(j);
+                }
+            }
+        }
+
+        (rows, cols)
+    }
+
+    /// Return indices for the upper triangle of an n-by-n array.
+    ///
+    /// # Arguments
+    ///
+    /// * `n` - Size of the arrays for which the indices are returned
+    /// * `k` - Diagonal offset (0 for main diagonal, positive for above, negative for below)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let (rows, cols) = Array::triu_indices(3, 0);
+    /// assert_eq!(rows, vec![0, 0, 0, 1, 1, 2]);
+    /// assert_eq!(cols, vec![0, 1, 2, 1, 2, 2]);
+    /// ```
+    pub fn triu_indices(n: usize, k: isize) -> (Vec<usize>, Vec<usize>) {
+        let mut rows = Vec::new();
+        let mut cols = Vec::new();
+
+        for i in 0..n {
+            for j in 0..n {
+                if (j as isize) >= (i as isize + k) {
+                    rows.push(i);
+                    cols.push(j);
+                }
+            }
+        }
+
+        (rows, cols)
+    }
 }
 
 #[cfg(test)]
@@ -547,5 +713,64 @@ mod tests {
         assert_eq!(data[1], 0.0);
         assert_eq!(data[2], 0.0);
         assert_eq!(data[4], 0.0);
+    }
+
+    #[test]
+    fn test_indices() {
+        let indices = Array::indices(&[2, 3]);
+        assert_eq!(indices.len(), 2);
+        assert_eq!(indices[0].shape().as_slice(), &[2, 3]);
+        assert_eq!(indices[1].shape().as_slice(), &[2, 3]);
+        // First dimension varies along rows
+        assert_eq!(indices[0].to_vec(), vec![0.0, 0.0, 0.0, 1.0, 1.0, 1.0]);
+        // Second dimension varies along columns
+        assert_eq!(indices[1].to_vec(), vec![0.0, 1.0, 2.0, 0.0, 1.0, 2.0]);
+    }
+
+    #[test]
+    fn test_unravel_index() {
+        let shape = Shape::new(vec![3, 4]);
+        assert_eq!(Array::unravel_index(0, &shape), vec![0, 0]);
+        assert_eq!(Array::unravel_index(5, &shape), vec![1, 1]);
+        assert_eq!(Array::unravel_index(11, &shape), vec![2, 3]);
+    }
+
+    #[test]
+    fn test_ravel_multi_index() {
+        let shape = Shape::new(vec![3, 4]);
+        assert_eq!(Array::ravel_multi_index(&[0, 0], &shape), 0);
+        assert_eq!(Array::ravel_multi_index(&[1, 2], &shape), 6);
+        assert_eq!(Array::ravel_multi_index(&[2, 3], &shape), 11);
+    }
+
+    #[test]
+    fn test_diag_indices() {
+        let (rows, cols) = Array::diag_indices(3);
+        assert_eq!(rows, vec![0, 1, 2]);
+        assert_eq!(cols, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_tril_indices() {
+        let (rows, cols) = Array::tril_indices(3, 0);
+        assert_eq!(rows, vec![0, 1, 1, 2, 2, 2]);
+        assert_eq!(cols, vec![0, 0, 1, 0, 1, 2]);
+
+        // Test with offset
+        let (rows2, cols2) = Array::tril_indices(3, 1);
+        assert_eq!(rows2, vec![0, 0, 1, 1, 1, 2, 2, 2]);
+        assert_eq!(cols2, vec![0, 1, 0, 1, 2, 0, 1, 2]);
+    }
+
+    #[test]
+    fn test_triu_indices() {
+        let (rows, cols) = Array::triu_indices(3, 0);
+        assert_eq!(rows, vec![0, 0, 0, 1, 1, 2]);
+        assert_eq!(cols, vec![0, 1, 2, 1, 2, 2]);
+
+        // Test with offset k=-1 (includes first subdiagonal)
+        let (rows2, cols2) = Array::triu_indices(3, -1);
+        assert_eq!(rows2, vec![0, 0, 0, 1, 1, 1, 2, 2]);
+        assert_eq!(cols2, vec![0, 1, 2, 0, 1, 2, 1, 2]);
     }
 }
