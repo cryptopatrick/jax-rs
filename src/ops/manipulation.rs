@@ -912,6 +912,247 @@ impl Array {
     pub fn extract(&self, condition: &Array) -> Array {
         self.compress(condition)
     }
+
+    /// Roll array elements along a given axis.
+    ///
+    /// Elements that roll beyond the last position are re-introduced at the first.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let rolled = a.roll(2);
+    /// assert_eq!(rolled.to_vec(), vec![4.0, 5.0, 1.0, 2.0, 3.0]);
+    /// ```
+    pub fn roll(&self, shift: isize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let len = data.len();
+
+        if len == 0 {
+            return self.clone();
+        }
+
+        // Normalize shift to be within [0, len)
+        let shift = ((shift % len as isize) + len as isize) as usize % len;
+
+        let mut result = vec![0.0; len];
+        for i in 0..len {
+            result[(i + shift) % len] = data[i];
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Rotate array by 90 degrees in the plane specified by axes.
+    ///
+    /// For 2D arrays, rotates counterclockwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let rotated = a.rot90(1);
+    /// assert_eq!(rotated.to_vec(), vec![2.0, 4.0, 1.0, 3.0]);
+    /// ```
+    pub fn rot90(&self, k: isize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.shape().ndim(), 2, "Only 2D arrays supported");
+
+        let shape = self.shape().as_slice();
+        let (h, w) = (shape[0], shape[1]);
+        let data = self.to_vec();
+
+        // Normalize k to be within [0, 4)
+        let k = ((k % 4) + 4) % 4;
+
+        match k {
+            0 => self.clone(),
+            1 => {
+                // Rotate 90 degrees counterclockwise
+                let mut result = vec![0.0; h * w];
+                for i in 0..h {
+                    for j in 0..w {
+                        let new_i = w - 1 - j;
+                        let new_j = i;
+                        result[new_i * h + new_j] = data[i * w + j];
+                    }
+                }
+                Array::from_vec(result, Shape::new(vec![w, h]))
+            }
+            2 => {
+                // Rotate 180 degrees
+                let mut result = vec![0.0; h * w];
+                for i in 0..h {
+                    for j in 0..w {
+                        let new_i = h - 1 - i;
+                        let new_j = w - 1 - j;
+                        result[new_i * w + new_j] = data[i * w + j];
+                    }
+                }
+                Array::from_vec(result, Shape::new(vec![h, w]))
+            }
+            3 => {
+                // Rotate 270 degrees counterclockwise (90 clockwise)
+                let mut result = vec![0.0; h * w];
+                for i in 0..h {
+                    for j in 0..w {
+                        let new_i = j;
+                        let new_j = h - 1 - i;
+                        result[new_i * h + new_j] = data[i * w + j];
+                    }
+                }
+                Array::from_vec(result, Shape::new(vec![w, h]))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Interchange two axes of an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let swapped = a.swapaxes(0, 1);
+    /// assert_eq!(swapped.shape().as_slice(), &[3, 2]);
+    /// ```
+    pub fn swapaxes(&self, axis1: usize, axis2: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let ndim = self.shape().ndim();
+        assert!(axis1 < ndim, "axis1 out of bounds");
+        assert!(axis2 < ndim, "axis2 out of bounds");
+
+        if axis1 == axis2 {
+            return self.clone();
+        }
+
+        // For 2D arrays, this is just transpose
+        if ndim == 2 && ((axis1 == 0 && axis2 == 1) || (axis1 == 1 && axis2 == 0)) {
+            return self.transpose();
+        }
+
+        // General case for higher dimensions
+        let old_shape = self.shape().as_slice();
+        let mut new_shape = old_shape.to_vec();
+        new_shape.swap(axis1, axis2);
+
+        let data = self.to_vec();
+        let size = self.size();
+        let mut result = vec![0.0; size];
+
+        // Compute strides for old and new shapes
+        let old_strides = self.shape().default_strides();
+        let mut new_strides = vec![1; ndim];
+        for i in (0..ndim - 1).rev() {
+            new_strides[i] = new_strides[i + 1] * new_shape[i + 1];
+        }
+
+        // Copy elements with swapped axes
+        for i in 0..size {
+            let mut old_indices = vec![0; ndim];
+            let mut temp = i;
+            for j in 0..ndim {
+                old_indices[j] = temp / old_strides[j];
+                temp %= old_strides[j];
+            }
+
+            // Swap the indices
+            old_indices.swap(axis1, axis2);
+
+            // Compute new flat index
+            let mut new_idx = 0;
+            for j in 0..ndim {
+                new_idx += old_indices[j] * new_strides[j];
+            }
+
+            result[new_idx] = data[i];
+        }
+
+        Array::from_vec(result, Shape::new(new_shape))
+    }
+
+    /// Move axes of an array to new positions.
+    ///
+    /// Simplified version that only supports moving a single axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![1, 2, 3]));
+    /// let moved = a.moveaxis(2, 0);
+    /// assert_eq!(moved.shape().as_slice(), &[3, 1, 2]);
+    /// ```
+    pub fn moveaxis(&self, source: usize, destination: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let ndim = self.shape().ndim();
+        assert!(source < ndim, "source axis out of bounds");
+        assert!(destination < ndim, "destination axis out of bounds");
+
+        if source == destination {
+            return self.clone();
+        }
+
+        let old_shape = self.shape().as_slice();
+        let mut new_shape = Vec::new();
+
+        // Build new shape by removing source axis and inserting at destination
+        for (i, &dim) in old_shape.iter().enumerate() {
+            if i != source {
+                new_shape.push(dim);
+            }
+        }
+        new_shape.insert(destination, old_shape[source]);
+
+        // For simple cases, use swapaxes
+        if ndim == 2 {
+            return self.swapaxes(source, destination);
+        }
+
+        // For 3D, we can implement a specific case
+        if ndim == 3 {
+            let data = self.to_vec();
+            let size = self.size();
+            let mut result = vec![0.0; size];
+
+            let old_strides = self.shape().default_strides();
+            let mut new_strides = vec![1; ndim];
+            for i in (0..ndim - 1).rev() {
+                new_strides[i] = new_strides[i + 1] * new_shape[i + 1];
+            }
+
+            for i in 0..size {
+                let mut old_indices = vec![0; ndim];
+                let mut temp = i;
+                for j in 0..ndim {
+                    old_indices[j] = temp / old_strides[j];
+                    temp %= old_strides[j];
+                }
+
+                // Reorder indices
+                let moved_val = old_indices[source];
+                old_indices.remove(source);
+                old_indices.insert(destination, moved_val);
+
+                // Compute new flat index
+                let mut new_idx = 0;
+                for j in 0..ndim {
+                    new_idx += old_indices[j] * new_strides[j];
+                }
+
+                result[new_idx] = data[i];
+            }
+
+            return Array::from_vec(result, Shape::new(new_shape));
+        }
+
+        // For higher dimensions, fall back to swapaxes
+        self.swapaxes(source, destination)
+    }
 }
 
 #[cfg(test)]
@@ -1165,5 +1406,57 @@ mod tests {
         );
         let result = a.extract(&condition);
         assert_eq!(result.to_vec(), vec![1.0, 3.0, 5.0]);
+    }
+
+    #[test]
+    fn test_roll() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0],
+            Shape::new(vec![5]),
+        );
+        let rolled = a.roll(2);
+        assert_eq!(rolled.to_vec(), vec![4.0, 5.0, 1.0, 2.0, 3.0]);
+
+        // Test negative roll
+        let rolled_neg = a.roll(-1);
+        assert_eq!(rolled_neg.to_vec(), vec![2.0, 3.0, 4.0, 5.0, 1.0]);
+    }
+
+    #[test]
+    fn test_rot90() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+
+        // Rotate 90 degrees
+        let rot1 = a.rot90(1);
+        assert_eq!(rot1.to_vec(), vec![2.0, 4.0, 1.0, 3.0]);
+
+        // Rotate 180 degrees
+        let rot2 = a.rot90(2);
+        assert_eq!(rot2.to_vec(), vec![4.0, 3.0, 2.0, 1.0]);
+
+        // Rotate 270 degrees
+        let rot3 = a.rot90(3);
+        assert_eq!(rot3.to_vec(), vec![3.0, 1.0, 4.0, 2.0]);
+    }
+
+    #[test]
+    fn test_swapaxes() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let swapped = a.swapaxes(0, 1);
+        assert_eq!(swapped.shape().as_slice(), &[3, 2]);
+        assert_eq!(swapped.to_vec(), vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn test_moveaxis() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![1, 2, 3]),
+        );
+        let moved = a.moveaxis(2, 0);
+        assert_eq!(moved.shape().as_slice(), &[3, 1, 2]);
     }
 }

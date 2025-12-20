@@ -601,6 +601,155 @@ impl Array {
         }
         result
     }
+
+    /// Sum of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 4.0], Shape::new(vec![4]));
+    /// let sum = a.nansum();
+    /// assert_eq!(sum, 8.0);
+    /// ```
+    pub fn nansum(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter().filter(|x| !x.is_nan()).sum()
+    }
+
+    /// Mean of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 4.0], Shape::new(vec![4]));
+    /// let mean = a.nanmean();
+    /// assert_eq!(mean, 8.0 / 3.0);
+    /// ```
+    pub fn nanmean(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let valid: Vec<f32> = data.iter().copied().filter(|x| !x.is_nan()).collect();
+        if valid.is_empty() {
+            return f32::NAN;
+        }
+        valid.iter().sum::<f32>() / valid.len() as f32
+    }
+
+    /// Maximum of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 4.0, 2.0], Shape::new(vec![4]));
+    /// let max = a.nanmax();
+    /// assert_eq!(max, 4.0);
+    /// ```
+    pub fn nanmax(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter()
+            .copied()
+            .filter(|x| !x.is_nan())
+            .fold(f32::NEG_INFINITY, f32::max)
+    }
+
+    /// Minimum of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 4.0, 2.0], Shape::new(vec![4]));
+    /// let min = a.nanmin();
+    /// assert_eq!(min, 1.0);
+    /// ```
+    pub fn nanmin(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter()
+            .copied()
+            .filter(|x| !x.is_nan())
+            .fold(f32::INFINITY, f32::min)
+    }
+
+    /// Standard deviation of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 5.0], Shape::new(vec![4]));
+    /// let std = a.nanstd();
+    /// assert!((std - 2.0).abs() < 1e-5);
+    /// ```
+    pub fn nanstd(&self) -> f32 {
+        self.nanvar().sqrt()
+    }
+
+    /// Variance of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 5.0], Shape::new(vec![4]));
+    /// let var = a.nanvar();
+    /// assert!((var - 4.0).abs() < 1e-5);
+    /// ```
+    pub fn nanvar(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let valid: Vec<f32> = data.iter().copied().filter(|x| !x.is_nan()).collect();
+
+        if valid.is_empty() || valid.len() == 1 {
+            return f32::NAN;
+        }
+
+        let mean = valid.iter().sum::<f32>() / valid.len() as f32;
+        let variance = valid
+            .iter()
+            .map(|x| {
+                let diff = x - mean;
+                diff * diff
+            })
+            .sum::<f32>()
+            / (valid.len() - 1) as f32; // Bessel's correction (sample variance)
+
+        variance
+    }
+
+    /// Median of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 5.0, 2.0], Shape::new(vec![5]));
+    /// let median = a.nanmedian();
+    /// assert_eq!(median, 2.5);
+    /// ```
+    pub fn nanmedian(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut valid: Vec<f32> = data.iter().copied().filter(|x| !x.is_nan()).collect();
+
+        if valid.is_empty() {
+            return f32::NAN;
+        }
+
+        valid.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let len = valid.len();
+
+        if len % 2 == 0 {
+            (valid[len / 2 - 1] + valid[len / 2]) / 2.0
+        } else {
+            valid[len / 2]
+        }
+    }
 }
 
 #[cfg(test)]
@@ -755,5 +904,75 @@ mod tests {
         // diff_n(0) should return the original array
         let diff0 = a.diff_n(0);
         assert_eq!(diff0.to_vec(), a.to_vec());
+    }
+
+    #[test]
+    fn test_nansum() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, 4.0],
+            Shape::new(vec![4]),
+        );
+        let sum = a.nansum();
+        assert_eq!(sum, 8.0);
+    }
+
+    #[test]
+    fn test_nanmean() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, 4.0],
+            Shape::new(vec![4]),
+        );
+        let mean = a.nanmean();
+        assert_abs_diff_eq!(mean, 8.0 / 3.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_nanmax() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 4.0, 2.0],
+            Shape::new(vec![4]),
+        );
+        let max = a.nanmax();
+        assert_eq!(max, 4.0);
+    }
+
+    #[test]
+    fn test_nanmin() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 4.0, 2.0],
+            Shape::new(vec![4]),
+        );
+        let min = a.nanmin();
+        assert_eq!(min, 1.0);
+    }
+
+    #[test]
+    fn test_nanstd() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, 5.0],
+            Shape::new(vec![4]),
+        );
+        let std = a.nanstd();
+        assert_abs_diff_eq!(std, 2.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_nanvar() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, 5.0],
+            Shape::new(vec![4]),
+        );
+        let var = a.nanvar();
+        assert_abs_diff_eq!(var, 4.0, epsilon = 1e-5);
+    }
+
+    #[test]
+    fn test_nanmedian() {
+        let a = Array::from_vec(
+            vec![1.0, f32::NAN, 3.0, 5.0, 2.0],
+            Shape::new(vec![5]),
+        );
+        let median = a.nanmedian();
+        assert_eq!(median, 2.5);
     }
 }
