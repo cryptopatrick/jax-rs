@@ -750,6 +750,268 @@ impl Array {
             valid[len / 2]
         }
     }
+
+    /// Peak-to-peak (maximum - minimum) value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 5.0, 2.0, 8.0], Shape::new(vec![4]));
+    /// assert_eq!(a.ptp(), 7.0);
+    /// ```
+    pub fn ptp(&self) -> f32 {
+        let max = self.max_all();
+        let min = self.min_all();
+        max - min
+    }
+
+    /// Peak-to-peak (maximum - minimum) along an axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 5.0, 2.0, 8.0], Shape::new(vec![2, 2]));
+    /// let ptp = a.ptp_axis(0);
+    /// assert_eq!(ptp.to_vec(), vec![1.0, 3.0]);
+    /// ```
+    pub fn ptp_axis(&self, axis: usize) -> Array {
+        let max = self.max(axis);
+        let min = self.min(axis);
+        max.sub(&min)
+    }
+
+    /// Compute the q-th quantile of the data.
+    ///
+    /// # Arguments
+    ///
+    /// * `q` - Quantile to compute (between 0.0 and 1.0)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let q = a.quantile(0.5); // Median
+    /// assert!((q - 3.0).abs() < 1e-6);
+    /// ```
+    pub fn quantile(&self, q: f32) -> f32 {
+        assert!(
+            q >= 0.0 && q <= 1.0,
+            "Quantile must be between 0 and 1"
+        );
+
+        let mut data = self.to_vec();
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let n = data.len();
+        if n == 0 {
+            return f32::NAN;
+        }
+
+        let index = q * (n - 1) as f32;
+        let lower = index.floor() as usize;
+        let upper = index.ceil() as usize;
+
+        if lower == upper {
+            data[lower]
+        } else {
+            let weight = index - lower as f32;
+            data[lower] * (1.0 - weight) + data[upper] * weight
+        }
+    }
+
+    /// Compute the q-th quantile along an axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let q = a.quantile_axis(0.5, 0);
+    /// assert_eq!(q.shape().as_slice(), &[3]);
+    /// ```
+    pub fn quantile_axis(&self, q: f32, axis: usize) -> Array {
+        assert!(
+            q >= 0.0 && q <= 1.0,
+            "Quantile must be between 0 and 1"
+        );
+        assert!(axis < self.ndim(), "Axis out of bounds");
+
+        let shape = self.shape();
+        let dims = shape.as_slice();
+        let axis_size = dims[axis];
+
+        // Compute output shape
+        let mut output_dims = dims.to_vec();
+        output_dims.remove(axis);
+        let output_shape = Shape::new(output_dims);
+        let output_size = output_shape.size();
+
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(output_size);
+
+        // For each position in the output
+        for output_idx in 0..output_size {
+            // Collect values along the axis
+            let mut values = Vec::with_capacity(axis_size);
+
+            for axis_idx in 0..axis_size {
+                // Compute input index
+                let mut input_idx = 0;
+                let mut remaining = output_idx;
+                let mut stride = 1;
+
+                for (dim_idx, &dim_size) in dims.iter().enumerate().rev() {
+                    if dim_idx == axis {
+                        input_idx += axis_idx * stride;
+                        stride *= dim_size;
+                    } else {
+                        let out_dim_size = if dim_idx < axis {
+                            dims[dim_idx]
+                        } else {
+                            dims[dim_idx]
+                        };
+                        let coord = remaining % out_dim_size;
+                        input_idx += coord * stride;
+                        remaining /= out_dim_size;
+                        stride *= dim_size;
+                    }
+                }
+
+                values.push(data[input_idx]);
+            }
+
+            // Compute quantile of collected values
+            values.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let n = values.len();
+            let index = q * (n - 1) as f32;
+            let lower = index.floor() as usize;
+            let upper = index.ceil() as usize;
+
+            let quantile = if lower == upper {
+                values[lower]
+            } else {
+                let weight = index - lower as f32;
+                values[lower] * (1.0 - weight) + values[upper] * weight
+            };
+
+            result.push(quantile);
+        }
+
+        Array::from_vec(result, output_shape)
+    }
+
+    /// Integrate along the array using the composite trapezoidal rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let integral = a.trapz();
+    /// assert_eq!(integral, 4.0); // (1+2)/2 + (2+3)/2 = 1.5 + 2.5 = 4.0
+    /// ```
+    pub fn trapz(&self) -> f32 {
+        let data = self.to_vec();
+        if data.len() < 2 {
+            return 0.0;
+        }
+
+        let mut sum = 0.0;
+        for i in 0..data.len() - 1 {
+            sum += (data[i] + data[i + 1]) / 2.0;
+        }
+        sum
+    }
+
+    /// Integrate along an axis using the composite trapezoidal rule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let integral = a.trapz_axis(1);
+    /// assert_eq!(integral.shape().as_slice(), &[2]);
+    /// ```
+    pub fn trapz_axis(&self, axis: usize) -> Array {
+        assert!(axis < self.ndim(), "Axis out of bounds");
+
+        let shape = self.shape();
+        let dims = shape.as_slice();
+        let axis_size = dims[axis];
+
+        if axis_size < 2 {
+            // Can't integrate with less than 2 points
+            let mut output_dims = dims.to_vec();
+            output_dims.remove(axis);
+            let output_shape = Shape::new(output_dims);
+            return Array::zeros(output_shape, self.dtype());
+        }
+
+        // Compute output shape
+        let mut output_dims = dims.to_vec();
+        output_dims.remove(axis);
+        let output_shape = Shape::new(output_dims);
+        let output_size = output_shape.size();
+
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(output_size);
+
+        // For each position in the output
+        for output_idx in 0..output_size {
+            let mut sum = 0.0;
+
+            // Integrate along the axis
+            for i in 0..axis_size - 1 {
+                // Get values at i and i+1
+                let idx1 = self.compute_axis_index(output_idx, axis, i, &output_shape);
+                let idx2 = self.compute_axis_index(output_idx, axis, i + 1, &output_shape);
+
+                sum += (data[idx1] + data[idx2]) / 2.0;
+            }
+
+            result.push(sum);
+        }
+
+        Array::from_vec(result, output_shape)
+    }
+
+    // Helper function to compute flat index given output index and axis position
+    fn compute_axis_index(
+        &self,
+        output_idx: usize,
+        axis: usize,
+        axis_pos: usize,
+        output_shape: &Shape,
+    ) -> usize {
+        let dims = self.shape().as_slice();
+        let output_dims = output_shape.as_slice();
+
+        let mut input_idx = 0;
+        let mut remaining = output_idx;
+        let mut stride = 1;
+
+        for (dim_idx, &dim_size) in dims.iter().enumerate().rev() {
+            if dim_idx == axis {
+                input_idx += axis_pos * stride;
+            } else {
+                let out_dim_idx = if dim_idx > axis {
+                    dim_idx - 1
+                } else {
+                    dim_idx
+                };
+                let coord = remaining % output_dims[out_dim_idx];
+                input_idx += coord * stride;
+                remaining /= output_dims[out_dim_idx];
+            }
+            stride *= dim_size;
+        }
+
+        input_idx
+    }
 }
 
 #[cfg(test)]
@@ -974,5 +1236,60 @@ mod tests {
         );
         let median = a.nanmedian();
         assert_eq!(median, 2.5);
+    }
+
+    #[test]
+    fn test_ptp() {
+        let a = Array::from_vec(vec![1.0, 5.0, 2.0, 8.0], Shape::new(vec![4]));
+        assert_eq!(a.ptp(), 7.0);
+    }
+
+    #[test]
+    fn test_ptp_axis() {
+        let a = Array::from_vec(vec![1.0, 5.0, 2.0, 8.0], Shape::new(vec![2, 2]));
+        let ptp = a.ptp_axis(0);
+        assert_eq!(ptp.to_vec(), vec![1.0, 3.0]);
+    }
+
+    #[test]
+    fn test_quantile() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        assert_abs_diff_eq!(a.quantile(0.0), 1.0, epsilon = 1e-6);
+        assert_abs_diff_eq!(a.quantile(0.5), 3.0, epsilon = 1e-6);
+        assert_abs_diff_eq!(a.quantile(1.0), 5.0, epsilon = 1e-6);
+        assert_abs_diff_eq!(a.quantile(0.25), 2.0, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_quantile_axis() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let q = a.quantile_axis(0.5, 0);
+        assert_eq!(q.shape().as_slice(), &[3]);
+        assert_abs_diff_eq!(q.to_vec()[0], 2.5, epsilon = 1e-6);
+        assert_abs_diff_eq!(q.to_vec()[1], 3.5, epsilon = 1e-6);
+        assert_abs_diff_eq!(q.to_vec()[2], 4.5, epsilon = 1e-6);
+    }
+
+    #[test]
+    fn test_trapz() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        assert_eq!(a.trapz(), 4.0);
+
+        let b = Array::from_vec(vec![0.0, 1.0, 0.0], Shape::new(vec![3]));
+        assert_eq!(b.trapz(), 1.0);
+    }
+
+    #[test]
+    fn test_trapz_axis() {
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let integral = a.trapz_axis(1);
+        assert_eq!(integral.shape().as_slice(), &[2]);
+        assert_eq!(integral.to_vec(), vec![4.0, 10.0]);
     }
 }

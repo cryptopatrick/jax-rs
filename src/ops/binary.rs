@@ -198,6 +198,95 @@ impl Array {
             diff * diff
         })
     }
+
+    /// Element-wise modulo operation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, 7.0, 9.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![3.0, 3.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.mod_op(&b);
+    /// assert_eq!(c.to_vec(), vec![2.0, 1.0, 0.0]);
+    /// ```
+    pub fn mod_op(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| a % b)
+    }
+
+    /// Element-wise arctangent of a/b.
+    ///
+    /// Correctly handles signs to determine quadrant.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let y = Array::from_vec(vec![1.0, -1.0], Shape::new(vec![2]));
+    /// let x = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
+    /// let angle = y.atan2(&x);
+    /// # // We just check it compiles and runs
+    /// ```
+    pub fn atan2(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| a.atan2(b))
+    }
+
+    /// Element-wise hypot: sqrt(a^2 + b^2).
+    ///
+    /// Computes the hypotenuse in a numerically stable way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let b = Array::from_vec(vec![4.0, 3.0], Shape::new(vec![2]));
+    /// let c = a.hypot(&b);
+    /// assert_eq!(c.to_vec(), vec![5.0, 5.0]);
+    /// ```
+    pub fn hypot(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| a.hypot(b))
+    }
+
+    /// Element-wise copysign: magnitude of a with sign of b.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![-1.0, 1.0, -1.0], Shape::new(vec![3]));
+    /// let c = a.copysign(&b);
+    /// assert_eq!(c.to_vec(), vec![-1.0, 2.0, -3.0]);
+    /// ```
+    pub fn copysign(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Mul, |a, b| a.copysign(b))
+    }
+
+    /// Element-wise next representable float in direction of b.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = Array::from_vec(vec![2.0, 1.0], Shape::new(vec![2]));
+    /// let c = a.next_after(&b);
+    /// # // Just verify it compiles
+    /// ```
+    pub fn next_after(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| {
+            if a < b {
+                // Next float towards positive infinity
+                f32::from_bits(a.to_bits() + 1)
+            } else if a > b {
+                // Next float towards negative infinity
+                f32::from_bits(a.to_bits() - 1)
+            } else {
+                b
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +395,51 @@ mod tests {
         let b = Array::from_vec(vec![2.0, 2.0, 1.0], Shape::new(vec![3]));
         let c = a.squared_difference(&b);
         assert_eq!(c.to_vec(), vec![1.0, 0.0, 4.0]);
+    }
+
+    #[test]
+    fn test_mod_op() {
+        let a = Array::from_vec(vec![5.0, 7.0, 9.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![3.0, 3.0, 3.0], Shape::new(vec![3]));
+        let c = a.mod_op(&b);
+        assert_eq!(c.to_vec(), vec![2.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn test_atan2() {
+        let y = Array::from_vec(vec![1.0, 1.0, -1.0, -1.0], Shape::new(vec![4]));
+        let x = Array::from_vec(vec![1.0, -1.0, 1.0, -1.0], Shape::new(vec![4]));
+        let angle = y.atan2(&x);
+        let result = angle.to_vec();
+        // Just verify it produces reasonable results
+        assert!(result[0] > 0.0 && result[0] < 1.6); // ~π/4
+        assert!(result[1] > 2.0 && result[1] < 3.2); // ~3π/4
+    }
+
+    #[test]
+    fn test_hypot() {
+        let a = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+        let b = Array::from_vec(vec![4.0, 3.0], Shape::new(vec![2]));
+        let c = a.hypot(&b);
+        assert_eq!(c.to_vec(), vec![5.0, 5.0]);
+    }
+
+    #[test]
+    fn test_copysign() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![-1.0, 1.0, -1.0], Shape::new(vec![3]));
+        let c = a.copysign(&b);
+        assert_eq!(c.to_vec(), vec![-1.0, 2.0, -3.0]);
+    }
+
+    #[test]
+    fn test_next_after() {
+        let a = Array::from_vec(vec![1.0], Shape::new(vec![1]));
+        let b = Array::from_vec(vec![2.0], Shape::new(vec![1]));
+        let c = a.next_after(&b);
+        // Should be slightly larger than 1.0
+        assert!(c.to_vec()[0] > 1.0);
+        assert!(c.to_vec()[0] < 1.0 + 1e-6);
     }
 
     #[test]
