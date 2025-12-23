@@ -9,8 +9,44 @@ where
     F: Fn(f32, f32) -> f32,
 {
     assert_eq!(input.dtype(), DType::Float32, "Only Float32 supported");
+
+    // CPU path - simple fold
     let data = input.to_vec();
     data.iter().fold(init, |acc, &x| f(acc, x))
+}
+
+/// GPU-aware reduce_all that takes an operation string.
+fn reduce_all_gpu_aware(input: &Array, op: &str) -> f32 {
+    assert_eq!(input.dtype(), DType::Float32, "Only Float32 supported");
+
+    match input.device() {
+        Device::WebGpu => {
+            // GPU path
+            let output_buffer = Buffer::zeros(1, DType::Float32, Device::WebGpu);
+
+            crate::backend::ops::gpu_reduce_all(
+                input.buffer(),
+                &output_buffer,
+                op,
+            );
+
+            // Read result back from GPU
+            output_buffer.to_f32_vec()[0]
+        }
+        Device::Cpu | Device::Wasm => {
+            // CPU fallback - use appropriate init and operation
+            let (init, f): (f32, Box<dyn Fn(f32, f32) -> f32>) = match op {
+                "sum" => (0.0, Box::new(|acc, x| acc + x)),
+                "max" => (f32::NEG_INFINITY, Box::new(|acc, x| acc.max(x))),
+                "min" => (f32::INFINITY, Box::new(|acc, x| acc.min(x))),
+                "prod" => (1.0, Box::new(|acc, x| acc * x)),
+                _ => panic!("Unknown reduction op: {}", op),
+            };
+
+            let data = input.to_vec();
+            data.iter().fold(init, |acc, &x| f(acc, x))
+        }
+    }
 }
 
 /// Reduce along a specific axis.
@@ -110,7 +146,7 @@ impl Array {
     /// assert_eq!(sum, 10.0);
     /// ```
     pub fn sum_all(&self) -> f32 {
-        reduce_all(self, 0.0, |acc, x| acc + x)
+        reduce_all_gpu_aware(self, "sum")
     }
 
     /// Sum of all elements, returned as a scalar Array.
@@ -163,7 +199,7 @@ impl Array {
 
     /// Maximum of all elements.
     pub fn max_all(&self) -> f32 {
-        reduce_all(self, f32::NEG_INFINITY, |acc, x| acc.max(x))
+        reduce_all_gpu_aware(self, "max")
     }
 
     /// Maximum along a specific axis.
@@ -179,7 +215,7 @@ impl Array {
 
     /// Minimum of all elements.
     pub fn min_all(&self) -> f32 {
-        reduce_all(self, f32::INFINITY, |acc, x| acc.min(x))
+        reduce_all_gpu_aware(self, "min")
     }
 
     /// Minimum along a specific axis.

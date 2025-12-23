@@ -450,6 +450,172 @@ pub fn gpu_matmul(
     ctx.queue.submit(Some(encoder.finish()));
 }
 
+/// Execute a reduction operation on GPU.
+///
+/// Reduces an entire array to a single scalar value.
+/// Uses a two-pass algorithm for large arrays:
+/// 1. First pass: Each workgroup reduces 256 elements to 1
+/// 2. Second pass: Reduce workgroup results to final scalar
+///
+/// # Arguments
+///
+/// * `input` - Input buffer
+/// * `output` - Output buffer (size 1 for full reduction)
+/// * `op` - Operation: "sum", "max", "min", "prod"
+///
+/// # Panics
+///
+/// Panics if buffers are not on GPU.
+pub fn gpu_reduce_all(
+    input: &Buffer,
+    output: &Buffer,
+    op: &str,
+) {
+    use wgpu::util::DeviceExt;
+
+    let ctx = WebGpuContext::get();
+
+    // Validate buffers are on GPU
+    assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
+    assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
+    assert_eq!(output.len(), 1, "output must have size 1 for full reduction");
+
+    let n = input.len();
+
+    // If input is small enough, do single-pass reduction
+    if n <= 256 {
+        gpu_reduce_single_pass(input, output, op);
+        return;
+    }
+
+    // Two-pass reduction for large arrays
+    let num_workgroups = (n + 255) / 256;
+
+    // Create intermediate buffer for workgroup results
+    let intermediate = Buffer::zeros(num_workgroups, input.dtype(), crate::Device::WebGpu);
+
+    // First pass: reduce to workgroup results
+    gpu_reduce_pass(input, &intermediate, op, n);
+
+    // Second pass: reduce workgroup results to final value
+    gpu_reduce_single_pass(&intermediate, output, op);
+}
+
+/// Single-pass reduction (input size <= 256).
+fn gpu_reduce_single_pass(
+    input: &Buffer,
+    output: &Buffer,
+    op: &str,
+) {
+    gpu_reduce_pass(input, output, op, input.len());
+}
+
+/// Execute one pass of reduction.
+fn gpu_reduce_pass(
+    input: &Buffer,
+    output: &Buffer,
+    op: &str,
+    n: usize,
+) {
+    let ctx = WebGpuContext::get();
+
+    let input_buf = input.as_gpu_buffer();
+    let out_buf = output.as_gpu_buffer();
+
+    // Create shader module
+    let shader_code = shaders::reduction_shader(op);
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("reduction_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+    });
+
+    // Create bind group layout
+    let bind_group_layout =
+        ctx.device
+            .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("reduction_bind_group_layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+
+    // Create pipeline
+    let pipeline_layout =
+        ctx.device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("reduction_pipeline_layout"),
+                bind_group_layouts: &[&bind_group_layout],
+                push_constant_ranges: &[],
+            });
+
+    let pipeline =
+        ctx.device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("reduction_pipeline"),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: "main",
+                compilation_options: Default::default(),
+                cache: None,
+            });
+
+    // Create bind group
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("reduction_bind_group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: out_buf.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Dispatch
+    let workgroups = (n as u32 + 255) / 256;
+
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("reduction_encoder"),
+        });
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("reduction_pass"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

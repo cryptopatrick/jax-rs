@@ -161,6 +161,153 @@ fn main(
     .to_string()
 }
 
+/// Generate WGSL code for reduction operation.
+///
+/// Implements a parallel reduction within each workgroup.
+/// Each workgroup reduces 256 elements to 1, writing to output.
+/// For full array reduction, a second pass may be needed.
+///
+/// # Arguments
+///
+/// * `op` - Reduction operation: "sum", "max", "min", "prod"
+///
+/// # Examples
+///
+/// ```ignore
+/// let shader = reduction_shader("sum");
+/// // Generates WGSL shader for parallel sum reduction
+/// ```
+pub fn reduction_shader(op: &str) -> String {
+    let (reduce_expr, identity) = match op {
+        "sum" => ("acc + val", "0.0"),
+        "max" => ("max(acc, val)", "-3.402823466e+38"), // -f32::MAX
+        "min" => ("min(acc, val)", "3.402823466e+38"),  // f32::MAX
+        "prod" => ("acc * val", "1.0"),
+        _ => panic!("Unknown reduction operation: {}", op),
+    };
+
+    format!(
+        r#"@group(0) @binding(0)
+var<storage, read> input: array<f32>;
+
+@group(0) @binding(1)
+var<storage, read_write> output: array<f32>;
+
+const BLOCK_SIZE: u32 = 256u;
+
+var<workgroup> shared: array<f32, BLOCK_SIZE>;
+
+@compute @workgroup_size(256)
+fn main(
+    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(local_invocation_id) local_id: vec3<u32>,
+    @builtin(workgroup_id) workgroup_id: vec3<u32>,
+) {{
+    let tid = local_id.x;
+    let gid = global_id.x;
+    let n = arrayLength(&input);
+
+    // Load into shared memory with identity for out-of-bounds
+    if (gid < n) {{
+        shared[tid] = input[gid];
+    }} else {{
+        shared[tid] = {identity};
+    }}
+
+    workgroupBarrier();
+
+    // Parallel reduction in shared memory
+    var stride = BLOCK_SIZE / 2u;
+    while (stride > 0u) {{
+        if (tid < stride) {{
+            let val = shared[tid + stride];
+            let acc = shared[tid];
+            shared[tid] = {reduce_expr};
+        }}
+        stride = stride / 2u;
+        workgroupBarrier();
+    }}
+
+    // First thread writes workgroup result
+    if (tid == 0u) {{
+        output[workgroup_id.x] = shared[0];
+    }}
+}}
+"#,
+        identity = identity,
+        reduce_expr = reduce_expr
+    )
+}
+
+/// Generate WGSL code for axis reduction operation.
+///
+/// Reduces along a specific axis of a multidimensional array.
+/// More complex than full reduction as it preserves other dimensions.
+///
+/// # Arguments
+///
+/// * `op` - Reduction operation: "sum", "max", "min"
+///
+/// # Examples
+///
+/// ```ignore
+/// let shader = axis_reduction_shader("sum");
+/// // Generates WGSL shader for sum along an axis
+/// ```
+pub fn axis_reduction_shader(op: &str) -> String {
+    let (reduce_expr, identity) = match op {
+        "sum" => ("acc + val", "0.0"),
+        "max" => ("max(acc, val)", "-3.402823466e+38"),
+        "min" => ("min(acc, val)", "3.402823466e+38"),
+        _ => panic!("Unknown reduction operation: {}", op),
+    };
+
+    format!(
+        r#"struct Dimensions {{
+    input_size: u32,
+    axis_size: u32,
+    outer_size: u32,
+    _padding: u32,
+}}
+
+@group(0) @binding(0)
+var<storage, read> input: array<f32>;
+
+@group(0) @binding(1)
+var<storage, read_write> output: array<f32>;
+
+@group(0) @binding(2)
+var<uniform> dims: Dimensions;
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {{
+    let idx = global_id.x;
+    let output_size = dims.outer_size * (dims.input_size / dims.axis_size);
+
+    if (idx >= output_size) {{
+        return;
+    }}
+
+    // Calculate which output element we're computing
+    let outer_idx = idx / (dims.input_size / dims.axis_size);
+    let inner_idx = idx % (dims.input_size / dims.axis_size);
+
+    // Reduce along axis
+    var acc = {identity};
+    for (var i = 0u; i < dims.axis_size; i = i + 1u) {{
+        let input_idx = outer_idx * dims.input_size + i * (dims.input_size / dims.axis_size) + inner_idx;
+        let val = input[input_idx];
+        acc = {reduce_expr};
+    }}
+
+    output[idx] = acc;
+}}
+"#,
+        identity = identity,
+        reduce_expr = reduce_expr
+    )
+}
+
 /// Generate WGSL code for custom binary operation with function.
 ///
 /// For operations that need custom logic (like pow, min, max).
@@ -229,5 +376,28 @@ mod tests {
         assert!(shader.contains("workgroup_size(16, 16, 1)"));
         assert!(shader.contains("tile_a"));
         assert!(shader.contains("tile_b"));
+    }
+
+    #[test]
+    fn test_reduction_shader_sum() {
+        let shader = reduction_shader("sum");
+        assert!(shader.contains("acc + val"));
+        assert!(shader.contains("var<workgroup> shared"));
+        assert!(shader.contains("workgroupBarrier"));
+    }
+
+    #[test]
+    fn test_reduction_shader_max() {
+        let shader = reduction_shader("max");
+        assert!(shader.contains("max(acc, val)"));
+        assert!(shader.contains("-3.402823466e+38")); // -f32::MAX
+    }
+
+    #[test]
+    fn test_axis_reduction_shader() {
+        let shader = axis_reduction_shader("sum");
+        assert!(shader.contains("struct Dimensions"));
+        assert!(shader.contains("axis_size"));
+        assert!(shader.contains("outer_size"));
     }
 }
