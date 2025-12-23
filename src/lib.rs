@@ -28,6 +28,7 @@
 #![warn(clippy::all)]
 
 mod array;
+pub mod backend;
 mod buffer;
 mod device;
 mod dtype;
