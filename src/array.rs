@@ -136,6 +136,12 @@ impl Array {
         self.buffer.device()
     }
 
+    /// Get reference to the underlying buffer (internal use).
+    #[inline]
+    pub(crate) fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
     /// Get the number of dimensions.
     #[inline]
     pub fn ndim(&self) -> usize {

@@ -10,10 +10,74 @@ where
 {
     assert_eq!(lhs.dtype(), DType::Float32, "Only Float32 supported");
     assert_eq!(rhs.dtype(), DType::Float32, "Only Float32 supported");
-    assert_eq!(lhs.device(), Device::Cpu, "Only CPU supported for now");
-    assert_eq!(rhs.device(), Device::Cpu, "Only CPU supported for now");
 
     // Check if shapes are broadcast-compatible
+    let result_shape = lhs
+        .shape()
+        .broadcast_with(rhs.shape())
+        .expect("Shapes are not broadcast-compatible");
+
+    // Dispatch based on device
+    let result = match (lhs.device(), rhs.device()) {
+        (Device::WebGpu, Device::WebGpu) => {
+            // GPU path - no broadcasting support yet, shapes must match exactly
+            assert_eq!(
+                lhs.shape(),
+                rhs.shape(),
+                "GPU operations do not support broadcasting yet"
+            );
+
+            // Map primitive to WGSL operator
+            let op_str = match &op {
+                Primitive::Add => "+",
+                Primitive::Sub => "-",
+                Primitive::Mul => "*",
+                Primitive::Div => "/",
+                _ => {
+                    // Fallback to CPU for unsupported ops
+                    return binary_op_cpu(lhs, rhs, op.clone(), f);
+                }
+            };
+
+            // Create output buffer on GPU
+            let output_buffer = Buffer::zeros(
+                result_shape.size(),
+                DType::Float32,
+                Device::WebGpu,
+            );
+
+            // Execute on GPU
+            crate::backend::ops::gpu_binary_op(
+                lhs.buffer(),
+                rhs.buffer(),
+                &output_buffer,
+                op_str,
+            );
+
+            Array::from_buffer(output_buffer, result_shape)
+        }
+        (Device::Cpu, Device::Cpu) | (Device::Wasm, Device::Wasm) => {
+            // CPU path with broadcasting support
+            binary_op_cpu(lhs, rhs, op.clone(), f)
+        }
+        _ => {
+            panic!("Mixed device operations not supported. Both arrays must be on the same device.");
+        }
+    };
+
+    // Register with trace context if tracing is active
+    if is_tracing() {
+        trace_binary(result.id(), op, lhs, rhs);
+    }
+
+    result
+}
+
+/// CPU implementation of binary operation with broadcasting support.
+fn binary_op_cpu<F>(lhs: &Array, rhs: &Array, _op: Primitive, f: F) -> Array
+where
+    F: Fn(f32, f32) -> f32,
+{
     let result_shape = lhs
         .shape()
         .broadcast_with(rhs.shape())
@@ -38,14 +102,7 @@ where
     };
 
     let buffer = Buffer::from_f32(result_data, Device::Cpu);
-    let result = Array::from_buffer(buffer, result_shape);
-
-    // Register with trace context if tracing is active
-    if is_tracing() {
-        trace_binary(result.id(), op, lhs, rhs);
-    }
-
-    result
+    Array::from_buffer(buffer, result_shape)
 }
 
 /// Helper function to perform binary operation with broadcasting.

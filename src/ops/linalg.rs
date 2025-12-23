@@ -74,8 +74,6 @@ impl Array {
     pub fn matmul(&self, other: &Array) -> Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
         assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
-        assert_eq!(self.device(), Device::Cpu, "Only CPU supported for now");
-        assert_eq!(other.device(), Device::Cpu, "Only CPU supported for now");
 
         let a_shape = self.shape().as_slice();
         let b_shape = other.shape().as_slice();
@@ -116,23 +114,46 @@ impl Array {
         let (m, k) = (a_shape[0], a_shape[1]);
         let n = b_shape[1];
 
-        let a_data = self.to_vec();
-        let b_data = other.to_vec();
-        let mut result = vec![0.0; m * n];
+        // Dispatch based on device
+        match (self.device(), other.device()) {
+            (Device::WebGpu, Device::WebGpu) => {
+                // GPU path
+                let output_buffer = Buffer::zeros(m * n, DType::Float32, Device::WebGpu);
 
-        // Naive matrix multiplication O(n^3)
-        for i in 0..m {
-            for j in 0..n {
-                let mut sum = 0.0;
-                for p in 0..k {
-                    sum += a_data[i * k + p] * b_data[p * n + j];
+                crate::backend::ops::gpu_matmul(
+                    self.buffer(),
+                    other.buffer(),
+                    &output_buffer,
+                    m,
+                    n,
+                    k,
+                );
+
+                Array::from_buffer(output_buffer, Shape::new(vec![m, n]))
+            }
+            (Device::Cpu, Device::Cpu) | (Device::Wasm, Device::Wasm) => {
+                // CPU path - naive O(n^3) algorithm
+                let a_data = self.to_vec();
+                let b_data = other.to_vec();
+                let mut result = vec![0.0; m * n];
+
+                for i in 0..m {
+                    for j in 0..n {
+                        let mut sum = 0.0;
+                        for p in 0..k {
+                            sum += a_data[i * k + p] * b_data[p * n + j];
+                        }
+                        result[i * n + j] = sum;
+                    }
                 }
-                result[i * n + j] = sum;
+
+                let buffer = Buffer::from_f32(result, Device::Cpu);
+                Array::from_buffer(buffer, Shape::new(vec![m, n]))
+            }
+            _ => {
+                panic!("Mixed device operations not supported. Both arrays must be on the same device.");
             }
         }
-
-        let buffer = Buffer::from_f32(result, Device::Cpu);
-        Array::from_buffer(buffer, Shape::new(vec![m, n]))
     }
 
     /// Dot product of two arrays.
