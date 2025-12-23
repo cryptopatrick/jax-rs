@@ -2,6 +2,7 @@
 
 use crate::{DType, Device};
 use std::sync::Arc;
+use wgpu::util::DeviceExt;
 
 /// Raw data buffer for array storage.
 ///
@@ -13,15 +14,19 @@ pub struct Buffer {
 }
 
 #[derive(Debug)]
-struct BufferInner {
-    /// Raw bytes of the buffer
-    data: Vec<u8>,
-    /// Device where this buffer lives
-    device: Device,
-    /// Data type of elements (for validation)
-    dtype: DType,
-    /// Number of elements
-    len: usize,
+enum BufferInner {
+    /// CPU buffer stored as raw bytes
+    Cpu {
+        data: Vec<u8>,
+        dtype: DType,
+        len: usize,
+    },
+    /// WebGPU buffer
+    WebGpu {
+        buffer: wgpu::Buffer,
+        dtype: DType,
+        len: usize,
+    },
 }
 
 impl Buffer {
@@ -33,9 +38,34 @@ impl Buffer {
     /// * `dtype` - Data type of elements
     /// * `device` - Target device
     pub fn zeros(len: usize, dtype: DType, device: Device) -> Self {
-        let byte_len = len * dtype.byte_width();
-        let data = vec![0u8; byte_len];
-        Self { inner: Arc::new(BufferInner { data, device, dtype, len }) }
+        match device {
+            Device::Cpu | Device::Wasm => {
+                let byte_len = len * dtype.byte_width();
+                let data = vec![0u8; byte_len];
+                Self {
+                    inner: Arc::new(BufferInner::Cpu { data, dtype, len }),
+                }
+            }
+            Device::WebGpu => {
+                use crate::backend::webgpu::WebGpuContext;
+
+                let ctx = WebGpuContext::get();
+                let byte_len = (len * dtype.byte_width()) as u64;
+
+                let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("jax-rs GPU buffer (zeros)"),
+                    size: byte_len,
+                    usage: wgpu::BufferUsages::STORAGE
+                        | wgpu::BufferUsages::COPY_DST
+                        | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+
+                Self {
+                    inner: Arc::new(BufferInner::WebGpu { buffer, dtype, len }),
+                }
+            }
+        }
     }
 
     /// Create a new buffer from f32 data.
@@ -46,20 +76,43 @@ impl Buffer {
     pub fn from_f32(data: Vec<f32>, device: Device) -> Self {
         let dtype = DType::Float32;
         let len = data.len();
-        let byte_data = unsafe {
-            std::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                len * dtype.byte_width(),
-            )
-            .to_vec()
-        };
-        Self {
-            inner: Arc::new(BufferInner {
-                data: byte_data,
-                device,
-                dtype,
-                len,
-            }),
+
+        match device {
+            Device::Cpu | Device::Wasm => {
+                let byte_data = unsafe {
+                    std::slice::from_raw_parts(
+                        data.as_ptr() as *const u8,
+                        len * dtype.byte_width(),
+                    )
+                    .to_vec()
+                };
+                Self {
+                    inner: Arc::new(BufferInner::Cpu {
+                        data: byte_data,
+                        dtype,
+                        len,
+                    }),
+                }
+            }
+            Device::WebGpu => {
+                use crate::backend::webgpu::WebGpuContext;
+
+                let ctx = WebGpuContext::get();
+
+                let buffer = ctx.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("jax-rs GPU buffer (f32)"),
+                        contents: bytemuck::cast_slice(&data),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::COPY_SRC,
+                    },
+                );
+
+                Self {
+                    inner: Arc::new(BufferInner::WebGpu { buffer, dtype, len }),
+                }
+            }
         }
     }
 
@@ -72,20 +125,43 @@ impl Buffer {
     pub fn from_i32(data: Vec<i32>, device: Device) -> Self {
         let dtype = DType::Int32;
         let len = data.len();
-        let byte_data = unsafe {
-            std::slice::from_raw_parts(
-                data.as_ptr() as *const u8,
-                len * dtype.byte_width(),
-            )
-            .to_vec()
-        };
-        Self {
-            inner: Arc::new(BufferInner {
-                data: byte_data,
-                device,
-                dtype,
-                len,
-            }),
+
+        match device {
+            Device::Cpu | Device::Wasm => {
+                let byte_data = unsafe {
+                    std::slice::from_raw_parts(
+                        data.as_ptr() as *const u8,
+                        len * dtype.byte_width(),
+                    )
+                    .to_vec()
+                };
+                Self {
+                    inner: Arc::new(BufferInner::Cpu {
+                        data: byte_data,
+                        dtype,
+                        len,
+                    }),
+                }
+            }
+            Device::WebGpu => {
+                use crate::backend::webgpu::WebGpuContext;
+
+                let ctx = WebGpuContext::get();
+
+                let buffer = ctx.device.create_buffer_init(
+                    &wgpu::util::BufferInitDescriptor {
+                        label: Some("jax-rs GPU buffer (i32)"),
+                        contents: bytemuck::cast_slice(&data),
+                        usage: wgpu::BufferUsages::STORAGE
+                            | wgpu::BufferUsages::COPY_DST
+                            | wgpu::BufferUsages::COPY_SRC,
+                    },
+                );
+
+                Self {
+                    inner: Arc::new(BufferInner::WebGpu { buffer, dtype, len }),
+                }
+            }
         }
     }
 
@@ -103,71 +179,197 @@ impl Buffer {
 
     /// Get the number of elements in the buffer.
     #[inline]
-    #[allow(dead_code)]
     pub fn len(&self) -> usize {
-        self.inner.len
+        match &*self.inner {
+            BufferInner::Cpu { len, .. } => *len,
+            BufferInner::WebGpu { len, .. } => *len,
+        }
     }
 
     /// Check if the buffer is empty.
     #[inline]
-    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.inner.len == 0
+        self.len() == 0
     }
 
     /// Get the device where this buffer lives.
     #[inline]
     pub fn device(&self) -> Device {
-        self.inner.device
+        match &*self.inner {
+            BufferInner::Cpu { .. } => Device::Cpu,
+            BufferInner::WebGpu { .. } => Device::WebGpu,
+        }
     }
 
     /// Get the dtype of elements.
     #[inline]
     pub fn dtype(&self) -> DType {
-        self.inner.dtype
-    }
-
-    /// Read data as f32 slice (sync).
-    ///
-    /// # Panics
-    ///
-    /// Panics if dtype is not Float32.
-    pub fn as_f32_slice(&self) -> &[f32] {
-        assert_eq!(self.inner.dtype, DType::Float32);
-        unsafe {
-            std::slice::from_raw_parts(
-                self.inner.data.as_ptr() as *const f32,
-                self.inner.len,
-            )
+        match &*self.inner {
+            BufferInner::Cpu { dtype, .. } => *dtype,
+            BufferInner::WebGpu { dtype, .. } => *dtype,
         }
     }
 
-    /// Read data as i32 slice (sync).
+    /// Read data as f32 slice (sync, CPU only).
     ///
     /// # Panics
     ///
-    /// Panics if dtype is not Int32.
+    /// Panics if dtype is not Float32 or if buffer is on GPU.
+    pub fn as_f32_slice(&self) -> &[f32] {
+        match &*self.inner {
+            BufferInner::Cpu { data, dtype, len } => {
+                assert_eq!(*dtype, DType::Float32);
+                unsafe {
+                    std::slice::from_raw_parts(data.as_ptr() as *const f32, *len)
+                }
+            }
+            BufferInner::WebGpu { .. } => {
+                panic!("Cannot get slice from GPU buffer. Use to_f32_vec() instead.");
+            }
+        }
+    }
+
+    /// Read data as i32 slice (sync, CPU only).
+    ///
+    /// # Panics
+    ///
+    /// Panics if dtype is not Int32 or if buffer is on GPU.
     #[allow(dead_code)]
     pub fn as_i32_slice(&self) -> &[i32] {
-        assert_eq!(self.inner.dtype, DType::Int32);
-        unsafe {
-            std::slice::from_raw_parts(
-                self.inner.data.as_ptr() as *const i32,
-                self.inner.len,
-            )
+        match &*self.inner {
+            BufferInner::Cpu { data, dtype, len } => {
+                assert_eq!(*dtype, DType::Int32);
+                unsafe {
+                    std::slice::from_raw_parts(data.as_ptr() as *const i32, *len)
+                }
+            }
+            BufferInner::WebGpu { .. } => {
+                panic!("Cannot get slice from GPU buffer. Use to_i32_vec() instead.");
+            }
         }
     }
 
-    /// Copy data to a Vec<f32>.
+    /// Copy data to a Vec<f32> (works for both CPU and GPU).
     pub fn to_f32_vec(&self) -> Vec<f32> {
-        self.as_f32_slice().to_vec()
+        match &*self.inner {
+            BufferInner::Cpu { .. } => self.as_f32_slice().to_vec(),
+            BufferInner::WebGpu { buffer, len, dtype } => {
+                assert_eq!(*dtype, DType::Float32);
+                // Use pollster to block on async read
+                pollster::block_on(read_buffer_f32_async(buffer, *len))
+            }
+        }
     }
 
-    /// Copy data to a Vec<i32>.
+    /// Copy data to a Vec<i32> (works for both CPU and GPU).
     #[allow(dead_code)]
     pub fn to_i32_vec(&self) -> Vec<i32> {
-        self.as_i32_slice().to_vec()
+        match &*self.inner {
+            BufferInner::Cpu { .. } => self.as_i32_slice().to_vec(),
+            BufferInner::WebGpu { buffer, len, dtype } => {
+                assert_eq!(*dtype, DType::Int32);
+                // Use pollster to block on async read
+                pollster::block_on(read_buffer_i32_async(buffer, *len))
+            }
+        }
     }
+
+    /// Get reference to inner GPU buffer (for internal use).
+    ///
+    /// # Panics
+    ///
+    /// Panics if buffer is not on GPU.
+    #[allow(dead_code)]
+    pub(crate) fn as_gpu_buffer(&self) -> &wgpu::Buffer {
+        match &*self.inner {
+            BufferInner::WebGpu { buffer, .. } => buffer,
+            BufferInner::Cpu { .. } => {
+                panic!("Buffer is on CPU, not GPU");
+            }
+        }
+    }
+}
+
+/// Read a GPU buffer containing f32 data to CPU (async).
+async fn read_buffer_f32_async(buffer: &wgpu::Buffer, len: usize) -> Vec<f32> {
+    use crate::backend::webgpu::WebGpuContext;
+
+    let ctx = WebGpuContext::get();
+    let byte_len = (len * 4) as u64;
+
+    // Create staging buffer for reading
+    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("staging buffer (f32 read)"),
+        size: byte_len,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Copy GPU buffer to staging
+    let mut encoder = ctx.device.create_command_encoder(
+        &wgpu::CommandEncoderDescriptor {
+            label: Some("buffer read encoder"),
+        },
+    );
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_len);
+    ctx.queue.submit(Some(encoder.finish()));
+
+    // Map and read
+    let slice = staging.slice(..);
+    let (tx, rx) = futures::channel::oneshot::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    ctx.device.poll(wgpu::Maintain::Wait);
+    rx.await.unwrap().unwrap();
+
+    let data = slice.get_mapped_range();
+    let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+    drop(data);
+    staging.unmap();
+
+    result
+}
+
+/// Read a GPU buffer containing i32 data to CPU (async).
+async fn read_buffer_i32_async(buffer: &wgpu::Buffer, len: usize) -> Vec<i32> {
+    use crate::backend::webgpu::WebGpuContext;
+
+    let ctx = WebGpuContext::get();
+    let byte_len = (len * 4) as u64;
+
+    // Create staging buffer for reading
+    let staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("staging buffer (i32 read)"),
+        size: byte_len,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Copy GPU buffer to staging
+    let mut encoder = ctx.device.create_command_encoder(
+        &wgpu::CommandEncoderDescriptor {
+            label: Some("buffer read encoder"),
+        },
+    );
+    encoder.copy_buffer_to_buffer(buffer, 0, &staging, 0, byte_len);
+    ctx.queue.submit(Some(encoder.finish()));
+
+    // Map and read
+    let slice = staging.slice(..);
+    let (tx, rx) = futures::channel::oneshot::channel();
+    slice.map_async(wgpu::MapMode::Read, move |result| {
+        let _ = tx.send(result);
+    });
+    ctx.device.poll(wgpu::Maintain::Wait);
+    rx.await.unwrap().unwrap();
+
+    let data = slice.get_mapped_range();
+    let result: Vec<i32> = bytemuck::cast_slice(&data).to_vec();
+    drop(data);
+    staging.unmap();
+
+    result
 }
 
 #[cfg(test)]
