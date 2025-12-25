@@ -804,6 +804,141 @@ impl Array {
         Array::from_vec(result, Shape::new(vec![len]))
     }
 
+    /// Put values into an array at specified indices.
+    ///
+    /// Replaces elements at the given indices with the provided values.
+    /// Returns a new array with the modifications.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Flat indices where values should be placed
+    /// * `values` - Values to place at those indices
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let result = a.put(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+    /// assert_eq!(result.to_vec(), vec![10.0, 2.0, 30.0, 4.0, 50.0]);
+    /// ```
+    pub fn put(&self, indices: &[usize], values: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            values.len(),
+            "Number of indices must match number of values"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] = values[i];
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Take values from an array along an axis using indices.
+    ///
+    /// This is similar to gather operations in other frameworks.
+    /// For each position, it selects the element specified by the index array.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Array of indices to take along the axis
+    /// * `axis` - Axis along which to take values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // For a 2D array, select different columns for each row
+    /// let a = Array::from_vec(
+    ///     vec![10.0, 20.0, 30.0,
+    ///          40.0, 50.0, 60.0],
+    ///     Shape::new(vec![2, 3])
+    /// );
+    /// let indices = Array::from_vec(vec![0.0, 2.0], Shape::new(vec![2]));
+    /// let result = a.take_along_axis(&indices, 1);
+    /// // Takes column 0 from row 0 (10.0) and column 2 from row 1 (60.0)
+    /// assert_eq!(result.to_vec(), vec![10.0, 60.0]);
+    /// ```
+    pub fn take_along_axis(&self, indices: &Array, axis: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(indices.dtype(), DType::Float32, "Indices must be Float32");
+        assert!(axis < self.ndim(), "Axis {} out of bounds", axis);
+
+        let data = self.to_vec();
+        let idx_data = indices.to_vec();
+        let shape = self.shape().as_slice();
+
+        // For simplicity, handle 1D and 2D cases
+        if self.ndim() == 1 {
+            // 1D case: just take by indices
+            let result: Vec<f32> = idx_data
+                .iter()
+                .map(|&idx| {
+                    let i = idx as usize;
+                    assert!(i < data.len(), "Index {} out of bounds", i);
+                    data[i]
+                })
+                .collect();
+            return Array::from_vec(result, indices.shape().clone());
+        }
+
+        if self.ndim() == 2 && axis == 1 {
+            // 2D case, axis=1: take along columns
+            let rows = shape[0];
+            let cols = shape[1];
+
+            assert_eq!(
+                indices.size(),
+                rows,
+                "Indices size must match number of rows"
+            );
+
+            let result: Vec<f32> = idx_data
+                .iter()
+                .enumerate()
+                .map(|(row, &idx)| {
+                    let col = idx as usize;
+                    assert!(col < cols, "Column index {} out of bounds", col);
+                    data[row * cols + col]
+                })
+                .collect();
+
+            return Array::from_vec(result, Shape::new(vec![rows]));
+        }
+
+        if self.ndim() == 2 && axis == 0 {
+            // 2D case, axis=0: take along rows
+            let rows = shape[0];
+            let cols = shape[1];
+
+            assert_eq!(
+                indices.size(),
+                cols,
+                "Indices size must match number of columns"
+            );
+
+            let result: Vec<f32> = idx_data
+                .iter()
+                .enumerate()
+                .map(|(col, &idx)| {
+                    let row = idx as usize;
+                    assert!(row < rows, "Row index {} out of bounds", row);
+                    data[row * cols + col]
+                })
+                .collect();
+
+            return Array::from_vec(result, Shape::new(vec![cols]));
+        }
+
+        panic!("take_along_axis for ndim={} and axis={} not yet implemented", self.ndim(), axis);
+    }
+
     /// Return indices of non-zero elements.
     ///
     /// Returns indices where elements are non-zero (not equal to 0.0).
@@ -1689,5 +1824,53 @@ mod tests {
         let weights = Array::from_vec(vec![0.0, 0.5, 1.0], Shape::new(vec![3]));
         let result = a.lerp_array(&b, &weights);
         assert_eq!(result.to_vec(), vec![0.0, 60.0, 120.0]);
+    }
+
+    #[test]
+    fn test_put() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let result = a.put(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+        assert_eq!(result.to_vec(), vec![10.0, 2.0, 30.0, 4.0, 50.0]);
+        assert_eq!(result.shape().as_slice(), &[5]);
+
+        // Test with 2D array
+        let a2d = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let result2d = a2d.put(&[0, 5], &[100.0, 600.0]);
+        assert_eq!(result2d.to_vec(), vec![100.0, 2.0, 3.0, 4.0, 5.0, 600.0]);
+    }
+
+    #[test]
+    fn test_take_along_axis_1d() {
+        let a = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], Shape::new(vec![5]));
+        let indices = Array::from_vec(vec![0.0, 2.0, 4.0], Shape::new(vec![3]));
+        let result = a.take_along_axis(&indices, 0);
+        assert_eq!(result.to_vec(), vec![10.0, 30.0, 50.0]);
+    }
+
+    #[test]
+    fn test_take_along_axis_2d_axis1() {
+        let a = Array::from_vec(
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            Shape::new(vec![2, 3]),
+        );
+        // Take column 0 from row 0 and column 2 from row 1
+        let indices = Array::from_vec(vec![0.0, 2.0], Shape::new(vec![2]));
+        let result = a.take_along_axis(&indices, 1);
+        assert_eq!(result.to_vec(), vec![10.0, 60.0]);
+    }
+
+    #[test]
+    fn test_take_along_axis_2d_axis0() {
+        let a = Array::from_vec(
+            vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0],
+            Shape::new(vec![2, 3]),
+        );
+        // Take row 1 from column 0, row 0 from column 1, row 1 from column 2
+        let indices = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+        let result = a.take_along_axis(&indices, 0);
+        assert_eq!(result.to_vec(), vec![40.0, 20.0, 60.0]);
     }
 }
