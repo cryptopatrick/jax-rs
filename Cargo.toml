@@ -23,7 +23,16 @@ path = "src/lib.rs"
 name = "tests"
 path = "tests/test.rs"
 
+[[test]]
+name = "gpu_tests"
+path = "tests/gpu_tests.rs"
+required-features = ["webgpu"]
+
 ###############################################################################
+[features]
+default = ["webgpu"]
+webgpu = []
+
 [dependencies]
 wgpu = { version = "22", features = ["wgsl"] }
 pollster = "0.4"

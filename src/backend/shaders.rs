@@ -195,7 +195,7 @@ var<storage, read_write> output: array<f32>;
 
 const BLOCK_SIZE: u32 = 256u;
 
-var<workgroup> shared: array<f32, BLOCK_SIZE>;
+var<workgroup> shared_data: array<f32, BLOCK_SIZE>;
 
 @compute @workgroup_size(256)
 fn main(
@@ -209,9 +209,9 @@ fn main(
 
     // Load into shared memory with identity for out-of-bounds
     if (gid < n) {{
-        shared[tid] = input[gid];
+        shared_data[tid] = input[gid];
     }} else {{
-        shared[tid] = {identity};
+        shared_data[tid] = {identity};
     }}
 
     workgroupBarrier();
@@ -220,9 +220,9 @@ fn main(
     var stride = BLOCK_SIZE / 2u;
     while (stride > 0u) {{
         if (tid < stride) {{
-            let val = shared[tid + stride];
-            let acc = shared[tid];
-            shared[tid] = {reduce_expr};
+            let val = shared_data[tid + stride];
+            let acc = shared_data[tid];
+            shared_data[tid] = {reduce_expr};
         }}
         stride = stride / 2u;
         workgroupBarrier();
@@ -230,7 +230,7 @@ fn main(
 
     // First thread writes workgroup result
     if (tid == 0u) {{
-        output[workgroup_id.x] = shared[0];
+        output[workgroup_id.x] = shared_data[0];
     }}
 }}
 "#,
@@ -382,7 +382,7 @@ mod tests {
     fn test_reduction_shader_sum() {
         let shader = reduction_shader("sum");
         assert!(shader.contains("acc + val"));
-        assert!(shader.contains("var<workgroup> shared"));
+        assert!(shader.contains("var<workgroup> shared_data"));
         assert!(shader.contains("workgroupBarrier"));
     }
 

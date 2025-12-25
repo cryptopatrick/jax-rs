@@ -179,6 +179,53 @@ impl Array {
         self.buffer.to_f32_vec()
     }
 
+    /// Transfer array to a different device.
+    ///
+    /// If the array is already on the target device, returns a clone.
+    /// Otherwise, transfers the data to the new device.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use jax_rs::{Array, Device, Shape, DType};
+    /// let cpu_arr = Array::zeros(Shape::new(vec![10]), DType::Float32);
+    /// let gpu_arr = cpu_arr.to_device(Device::WebGpu);
+    /// assert_eq!(gpu_arr.device(), Device::WebGpu);
+    /// ```
+    pub fn to_device(&self, device: Device) -> Array {
+        if self.device() == device {
+            return self.clone();
+        }
+
+        match (self.device(), device) {
+            (Device::Cpu, Device::WebGpu) => {
+                // Upload to GPU
+                let data = self.to_vec();
+                let buffer = Buffer::from_f32(data, Device::WebGpu);
+                Array::from_buffer(buffer, self.shape().clone())
+            }
+            (Device::WebGpu, Device::Cpu) => {
+                // Download from GPU
+                let data = self.buffer().to_f32_vec();
+                let buffer = Buffer::from_f32(data, Device::Cpu);
+                Array::from_buffer(buffer, self.shape().clone())
+            }
+            (Device::Cpu, Device::Wasm) | (Device::Wasm, Device::Cpu) => {
+                // CPU <-> WASM transfer
+                let data = self.to_vec();
+                let buffer = Buffer::from_f32(data, device);
+                Array::from_buffer(buffer, self.shape().clone())
+            }
+            (Device::WebGpu, Device::Wasm) | (Device::Wasm, Device::WebGpu) => {
+                // Go through CPU as intermediate
+                let cpu = self.to_device(Device::Cpu);
+                cpu.to_device(device)
+            }
+            // Same device (already handled by early return, but need exhaustive match)
+            _ => self.clone()
+        }
+    }
+
     /// Reshape the array to a new shape.
     ///
     /// # Panics
