@@ -37,6 +37,40 @@ let square = |x: &Array| x.mul(x);
 let batch_square = vmap(square, 0);
 ```
 
+## WebGPU Acceleration
+
+jax-rs supports WebGPU for accelerated computation:
+
+```rust
+use jax_rs::{Array, Device, Shape, DType};
+use jax_rs::backend::webgpu::WebGpuContext;
+
+// Initialize WebGPU (async, call once at startup)
+pollster::block_on(async {
+    WebGpuContext::init().await.expect("GPU not available");
+});
+
+// Create array on GPU
+let x = Array::from_vec(
+    vec![1.0, 2.0, 3.0],
+    Shape::new(vec![3]),
+).to_device(Device::WebGpu);
+
+let y = x.mul(&x);  // Runs on GPU
+
+// Download result
+let result = y.to_vec();  // [1.0, 4.0, 9.0]
+```
+
+### Feature Flags
+
+- `webgpu` - Enable WebGPU backend (enabled by default)
+
+```toml
+[dependencies]
+jax-rs = { version = "0.1", features = ["webgpu"] }
+```
+
 ## Installation
 
 Add to your `Cargo.toml`:
@@ -51,6 +85,7 @@ jax-rs = "0.1"
 ```bash
 cargo run --example quickstart
 cargo run --example basic
+cargo run --example gpu_matmul --features webgpu  # WebGPU matrix multiplication
 ```
 
 ## Documentation
