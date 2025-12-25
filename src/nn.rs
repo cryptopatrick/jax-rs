@@ -1168,6 +1168,146 @@ pub fn conv_transpose2d(x: &Array, kernel: &Array) -> Array {
     Array::from_vec(result, Shape::new(vec![out_h, out_w]))
 }
 
+/// Depthwise 2D convolution operation.
+///
+/// Applies a separate 2D convolution to each input channel.
+/// Unlike regular convolution, depthwise convolution does not mix channels.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [channels, height, width]
+/// * `kernel` - Convolution kernel of shape [channels, kernel_h, kernel_w]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// // 2 channels, 4x4 spatial
+/// let x = Array::from_vec(vec![1.0; 32], Shape::new(vec![2, 4, 4]));
+/// // 2 channel kernels, 2x2 spatial
+/// let kernel = Array::from_vec(vec![1.0; 8], Shape::new(vec![2, 2, 2]));
+/// let result = nn::depthwise_conv2d(&x, &kernel);
+/// assert_eq!(result.shape().as_slice(), &[2, 3, 3]);
+/// ```
+pub fn depthwise_conv2d(x: &Array, kernel: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 3, "Input must be 3D [channels, height, width]");
+    assert_eq!(kernel.shape().ndim(), 3, "Kernel must be 3D [channels, kernel_h, kernel_w]");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_shape = x.shape().as_slice();
+    let k_shape = kernel.shape().as_slice();
+
+    let (channels, x_h, x_w) = (x_shape[0], x_shape[1], x_shape[2]);
+    let (k_channels, k_h, k_w) = (k_shape[0], k_shape[1], k_shape[2]);
+
+    assert_eq!(channels, k_channels, "Number of channels must match");
+    assert!(k_h <= x_h, "Kernel height must be <= input height");
+    assert!(k_w <= x_w, "Kernel width must be <= input width");
+
+    let out_h = x_h - k_h + 1;
+    let out_w = x_w - k_w + 1;
+    let mut result = vec![0.0; channels * out_h * out_w];
+
+    for c in 0..channels {
+        for i in 0..out_h {
+            for j in 0..out_w {
+                let mut sum = 0.0;
+                for ki in 0..k_h {
+                    for kj in 0..k_w {
+                        let x_idx = c * (x_h * x_w) + (i + ki) * x_w + (j + kj);
+                        let k_idx = c * (k_h * k_w) + ki * k_w + kj;
+                        sum += x_data[x_idx] * kernel_data[k_idx];
+                    }
+                }
+                result[c * (out_h * out_w) + i * out_w + j] = sum;
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![channels, out_h, out_w]))
+}
+
+/// Grouped 2D convolution operation.
+///
+/// Splits input and output channels into groups and applies separate convolutions.
+/// This is more efficient than regular convolution when groups > 1.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [in_channels, height, width]
+/// * `kernel` - Convolution kernel of shape [out_channels, in_channels/groups, kernel_h, kernel_w]
+/// * `groups` - Number of groups
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// // 4 input channels, 4x4 spatial
+/// let x = Array::from_vec(vec![1.0; 64], Shape::new(vec![4, 4, 4]));
+/// // 4 output channels, 2 input channels per group (groups=2), 2x2 kernel
+/// let kernel = Array::from_vec(vec![1.0; 32], Shape::new(vec![4, 2, 2, 2]));
+/// let result = nn::conv2d_grouped(&x, &kernel, 2);
+/// assert_eq!(result.shape().as_slice(), &[4, 3, 3]);
+/// ```
+pub fn conv2d_grouped(x: &Array, kernel: &Array, groups: usize) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 3, "Input must be 3D [in_channels, height, width]");
+    assert_eq!(kernel.shape().ndim(), 4, "Kernel must be 4D [out_channels, in_channels/groups, kernel_h, kernel_w]");
+    assert!(groups > 0, "Groups must be positive");
+
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let x_shape = x.shape().as_slice();
+    let k_shape = kernel.shape().as_slice();
+
+    let (in_channels, x_h, x_w) = (x_shape[0], x_shape[1], x_shape[2]);
+    let (out_channels, in_ch_per_group, k_h, k_w) =
+        (k_shape[0], k_shape[1], k_shape[2], k_shape[3]);
+
+    assert_eq!(in_channels % groups, 0, "Input channels must be divisible by groups");
+    assert_eq!(out_channels % groups, 0, "Output channels must be divisible by groups");
+    assert_eq!(in_channels / groups, in_ch_per_group,
+        "Kernel in_channels must equal in_channels/groups");
+
+    let out_h = x_h - k_h + 1;
+    let out_w = x_w - k_w + 1;
+    let mut result = vec![0.0; out_channels * out_h * out_w];
+
+    let out_ch_per_group = out_channels / groups;
+
+    for g in 0..groups {
+        let in_start = g * in_ch_per_group;
+        let out_start = g * out_ch_per_group;
+
+        for oc in 0..out_ch_per_group {
+            let out_channel = out_start + oc;
+            for i in 0..out_h {
+                for j in 0..out_w {
+                    let mut sum = 0.0;
+                    for ic in 0..in_ch_per_group {
+                        let in_channel = in_start + ic;
+                        for ki in 0..k_h {
+                            for kj in 0..k_w {
+                                let x_idx = in_channel * (x_h * x_w) + (i + ki) * x_w + (j + kj);
+                                let k_idx = out_channel * (in_ch_per_group * k_h * k_w) +
+                                           ic * (k_h * k_w) + ki * k_w + kj;
+                                sum += x_data[x_idx] * kernel_data[k_idx];
+                            }
+                        }
+                    }
+                    result[out_channel * (out_h * out_w) + i * out_w + j] = sum;
+                }
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![out_channels, out_h, out_w]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1347,5 +1487,76 @@ mod tests {
         let data = result.to_vec();
         assert_eq!(data[0], 1.0); // top-left
         assert_eq!(data[8], 4.0); // bottom-right
+    }
+
+    #[test]
+    fn test_depthwise_conv2d() {
+        // 2 channels, 4x4 spatial
+        let x = Array::from_vec(
+            vec![
+                // Channel 0
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+                // Channel 1
+                17.0, 18.0, 19.0, 20.0,
+                21.0, 22.0, 23.0, 24.0,
+                25.0, 26.0, 27.0, 28.0,
+                29.0, 30.0, 31.0, 32.0,
+            ],
+            Shape::new(vec![2, 4, 4]),
+        );
+        // 2 channel kernels, 2x2 spatial
+        let kernel = Array::from_vec(
+            vec![
+                // Kernel for channel 0
+                1.0, 0.0,
+                0.0, 1.0,
+                // Kernel for channel 1
+                1.0, 1.0,
+                1.0, 1.0,
+            ],
+            Shape::new(vec![2, 2, 2]),
+        );
+        let result = depthwise_conv2d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[2, 3, 3]);
+        assert_eq!(result.size(), 18);
+
+        // Channel 0: diagonal kernel should give 1+6=7 for top-left
+        let data = result.to_vec();
+        assert_eq!(data[0], 7.0);
+    }
+
+    #[test]
+    fn test_conv2d_grouped() {
+        // 4 input channels, 4x4 spatial
+        let x = Array::from_vec(vec![1.0; 64], Shape::new(vec![4, 4, 4]));
+        // 4 output channels, 2 input channels per group (groups=2), 2x2 kernel
+        let kernel = Array::from_vec(vec![1.0; 32], Shape::new(vec![4, 2, 2, 2]));
+        let result = conv2d_grouped(&x, &kernel, 2);
+
+        assert_eq!(result.shape().as_slice(), &[4, 3, 3]);
+        assert_eq!(result.size(), 36);
+
+        // Each output position should be sum of 2*2*2 = 8 elements (all 1.0)
+        let data = result.to_vec();
+        assert_eq!(data[0], 8.0);
+    }
+
+    #[test]
+    fn test_depthwise_conv2d_basic() {
+        // Simple 1 channel case
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0],
+            Shape::new(vec![1, 2, 2]),
+        );
+        let kernel = Array::from_vec(vec![1.0, 1.0, 1.0, 1.0], Shape::new(vec![1, 2, 2]));
+        let result = depthwise_conv2d(&x, &kernel);
+
+        assert_eq!(result.shape().as_slice(), &[1, 1, 1]);
+        // Sum of all elements: 1+2+3+4 = 10
+        assert_eq!(result.to_vec(), vec![10.0]);
     }
 }
