@@ -630,6 +630,95 @@ impl Array {
             else { a.min(b) }
         })
     }
+
+    /// Element-wise arc tangent of x1/x2 choosing the quadrant correctly.
+    ///
+    /// The quadrant (i.e., branch) is chosen so that arctan2(x1, x2) is
+    /// the signed angle in radians between the ray ending at the origin
+    /// and passing through the point (1,0), and the ray ending at the
+    /// origin and passing through the point (x2, x1).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let y = Array::from_vec(vec![1.0, -1.0, 1.0, -1.0], Shape::new(vec![4]));
+    /// let x = Array::from_vec(vec![1.0, 1.0, -1.0, -1.0], Shape::new(vec![4]));
+    /// let angles = y.arctan2(&x);
+    /// // First quadrant: pi/4, Second: -pi/4, Third: 3pi/4, Fourth: -3pi/4
+    /// ```
+    pub fn arctan2(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |y, x| y.atan2(x))
+    }
+
+    /// Element-wise remainder of division (fmod).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, 7.0, 10.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let c = a.fmod(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 1.0, 2.0]);
+    /// ```
+    pub fn fmod(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| a % b)
+    }
+
+    /// Return the next floating-point value after x1 towards x2.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = Array::from_vec(vec![2.0, 1.0], Shape::new(vec![2]));
+    /// let c = a.nextafter(&b);
+    /// // First element goes up slightly, second goes down
+    /// ```
+    pub fn nextafter(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |x1, x2| {
+            if x1 == x2 {
+                x2
+            } else if x2 > x1 {
+                // Next float toward positive infinity
+                let bits = x1.to_bits();
+                if x1 >= 0.0 {
+                    f32::from_bits(bits + 1)
+                } else {
+                    f32::from_bits(bits - 1)
+                }
+            } else {
+                // Next float toward negative infinity
+                let bits = x1.to_bits();
+                if x1 > 0.0 {
+                    f32::from_bits(bits - 1)
+                } else if x1 == 0.0 {
+                    f32::from_bits(1 | (1 << 31)) // Negative zero direction
+                } else {
+                    f32::from_bits(bits + 1)
+                }
+            }
+        })
+    }
+
+    /// Compute the safe element-wise division, returning 0 where denominator is 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 0.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.safe_divide(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 0.0, 1.0]);
+    /// ```
+    pub fn safe_divide(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| {
+            if b == 0.0 { 0.0 } else { a / b }
+        })
+    }
 }
 
 #[cfg(test)]

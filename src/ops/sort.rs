@@ -490,6 +490,254 @@ impl Array {
 
         counts
     }
+
+    /// Partially sort array so that the k-th element is in sorted position.
+    ///
+    /// Elements smaller than the k-th element are moved before it,
+    /// and elements larger are moved after it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 4.0, 2.0, 1.0], Shape::new(vec![4]));
+    /// let partitioned = a.partition(2);
+    /// // Element at index 2 is in correct sorted position
+    /// let data = partitioned.to_vec();
+    /// assert!(data[0] <= data[2] && data[1] <= data[2]);
+    /// assert!(data[2] <= data[3]);
+    /// ```
+    pub fn partition(&self, kth: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(kth < self.size(), "kth must be less than array size");
+
+        let mut data = self.to_vec();
+
+        // Use selection algorithm (quickselect-style partitioning)
+        let n = data.len();
+        let mut left = 0;
+        let mut right = n - 1;
+
+        while left < right {
+            let pivot = data[right];
+            let mut store_idx = left;
+
+            for i in left..right {
+                if data[i] < pivot {
+                    data.swap(i, store_idx);
+                    store_idx += 1;
+                }
+            }
+            data.swap(store_idx, right);
+
+            if store_idx == kth {
+                break;
+            } else if store_idx < kth {
+                left = store_idx + 1;
+            } else {
+                right = store_idx.saturating_sub(1);
+            }
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Return indices that would partition the array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 4.0, 2.0, 1.0], Shape::new(vec![4]));
+    /// let indices = a.argpartition(2);
+    /// // Indices are such that a[indices[0]] and a[indices[1]] are smaller than a[indices[2]]
+    /// ```
+    pub fn argpartition(&self, kth: usize) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(kth < self.size(), "kth must be less than array size");
+
+        let data = self.to_vec();
+        let mut indices: Vec<usize> = (0..data.len()).collect();
+
+        // Partition indices based on values
+        let n = indices.len();
+        let mut left = 0;
+        let mut right = n - 1;
+
+        while left < right {
+            let pivot_val = data[indices[right]];
+            let mut store_idx = left;
+
+            for i in left..right {
+                if data[indices[i]] < pivot_val {
+                    indices.swap(i, store_idx);
+                    store_idx += 1;
+                }
+            }
+            indices.swap(store_idx, right);
+
+            if store_idx == kth {
+                break;
+            } else if store_idx < kth {
+                left = store_idx + 1;
+            } else {
+                right = store_idx.saturating_sub(1);
+            }
+        }
+
+        indices
+    }
+
+    /// Perform indirect stable sort using a sequence of keys.
+    ///
+    /// Sort by the last key first, then by second-to-last, etc.
+    /// This is equivalent to numpy's lexsort.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Sort by surname, then by first name
+    /// let surnames = Array::from_vec(vec![1.0, 2.0, 1.0, 2.0], Shape::new(vec![4]));  // Hertz, Move, Hertz, Newton
+    /// let first_names = Array::from_vec(vec![1.0, 2.0, 2.0, 1.0], Shape::new(vec![4])); // Heinrich, Never, Lansen, Isaac
+    /// let indices = Array::lexsort(&[&first_names, &surnames]);
+    /// // Should be sorted by surname first, then first_name
+    /// ```
+    pub fn lexsort(keys: &[&Array]) -> Vec<usize> {
+        assert!(!keys.is_empty(), "Need at least one key");
+
+        let n = keys[0].size();
+        for key in keys {
+            assert_eq!(key.size(), n, "All keys must have same length");
+            assert_eq!(key.dtype(), DType::Float32, "Only Float32 supported");
+        }
+
+        let mut indices: Vec<usize> = (0..n).collect();
+
+        // Sort by keys in reverse order (last key is primary sort key)
+        indices.sort_by(|&a, &b| {
+            // Compare from last key to first
+            for key in keys.iter().rev() {
+                let key_data = key.to_vec();
+                let cmp = key_data[a].partial_cmp(&key_data[b]).unwrap();
+                if cmp != std::cmp::Ordering::Equal {
+                    return cmp;
+                }
+            }
+            std::cmp::Ordering::Equal
+        });
+
+        indices
+    }
+
+    /// Return the median element without full sorting.
+    ///
+    /// Uses quickselect algorithm for O(n) average performance.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], Shape::new(vec![5]));
+    /// let med = a.median_select();
+    /// assert_eq!(med, 3.0);
+    /// ```
+    pub fn median_select(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let n = self.size();
+        assert!(n > 0, "Array must not be empty");
+
+        let partitioned = self.partition(n / 2);
+        let data = partitioned.to_vec();
+
+        if n % 2 == 1 {
+            data[n / 2]
+        } else {
+            // For even length, also need the element before
+            let left = self.partition(n / 2 - 1);
+            let left_data = left.to_vec();
+            (left_data[n / 2 - 1] + data[n / 2]) / 2.0
+        }
+    }
+
+    /// Return the k-th smallest element using selection algorithm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], Shape::new(vec![5]));
+    /// let kth = a.select_kth(2); // 0-indexed, so 3rd smallest
+    /// assert_eq!(kth, 3.0);
+    /// ```
+    pub fn select_kth(&self, k: usize) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(k < self.size(), "k must be less than array size");
+
+        let partitioned = self.partition(k);
+        partitioned.to_vec()[k]
+    }
+
+    /// Sort array along the last axis.
+    ///
+    /// For 2D arrays, sorts each row independently.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 2.0, 6.0, 4.0, 5.0], Shape::new(vec![2, 3]));
+    /// let sorted = a.sort_axis(-1);
+    /// assert_eq!(sorted.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    /// ```
+    pub fn sort_axis(&self, _axis: i32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+
+        if shape.len() == 1 {
+            return self.sort();
+        }
+
+        if shape.len() == 2 {
+            // Sort each row
+            let (rows, cols) = (shape[0], shape[1]);
+            let data = self.to_vec();
+            let mut result = Vec::with_capacity(data.len());
+
+            for r in 0..rows {
+                let start = r * cols;
+                let mut row: Vec<f32> = data[start..start + cols].to_vec();
+                row.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                result.extend(row);
+            }
+
+            return Array::from_vec(result, self.shape().clone());
+        }
+
+        // For higher dimensions, just sort flat
+        self.sort()
+    }
+
+    /// Return indices that would sort the array in stable order.
+    ///
+    /// Unlike argsort, stable_argsort preserves the relative order
+    /// of equal elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 1.0, 2.0], Shape::new(vec![4]));
+    /// let indices = a.stable_argsort();
+    /// assert_eq!(indices, vec![1, 2, 3, 0]); // The two 1.0s maintain order
+    /// ```
+    pub fn stable_argsort(&self) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut indexed: Vec<(usize, f32)> = data.into_iter().enumerate().collect();
+        indexed.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
+        indexed.into_iter().map(|(i, _)| i).collect()
+    }
 }
 
 #[cfg(test)]

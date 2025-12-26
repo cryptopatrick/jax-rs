@@ -676,6 +676,58 @@ impl Array {
         let buffer = Buffer::from_f32(data, device);
         Array::from_buffer(buffer, Shape::new(vec![num]))
     }
+
+    /// Create empty array with same shape (uninitialized memory).
+    /// Note: In this implementation, we return zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.empty_like();
+    /// assert_eq!(b.shape().as_slice(), &[3]);
+    /// ```
+    pub fn empty_like(&self) -> Array {
+        // In practice, we return zeros for safety
+        Array::zeros(self.shape().clone(), self.dtype())
+    }
+
+    /// Check if array is C-contiguous (row-major order).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// assert!(a.is_contiguous());
+    /// ```
+    pub fn is_contiguous(&self) -> bool {
+        // Our arrays are always contiguous
+        true
+    }
+
+    /// Check if array is Fortran-contiguous (column-major order).
+    /// Note: Our arrays are always C-contiguous.
+    pub fn is_fortran_contiguous(&self) -> bool {
+        // Single-dimension arrays are both C and Fortran contiguous
+        self.ndim() <= 1
+    }
+
+    /// Return a contiguous array in memory (C order).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let b = a.ascontiguousarray();
+    /// assert!(b.is_contiguous());
+    /// ```
+    pub fn ascontiguousarray(&self) -> Array {
+        // Already contiguous, just clone
+        self.clone()
+    }
 }
 
 #[cfg(test)]

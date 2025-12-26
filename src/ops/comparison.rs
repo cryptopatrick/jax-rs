@@ -503,6 +503,55 @@ impl Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
         Array::zeros(self.shape().clone(), DType::Float32)
     }
+
+    /// Test element-wise if values are in an open interval.
+    /// Returns 1.0 where lower < x < upper, 0.0 otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let b = a.isin_range(1.5, 4.5);
+    /// assert_eq!(b.to_vec(), vec![0.0, 1.0, 1.0, 1.0, 0.0]);
+    /// ```
+    pub fn isin_range(&self, lower: f32, upper: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let result_data: Vec<f32> = data
+            .iter()
+            .map(|&x| if x > lower && x < upper { 1.0 } else { 0.0 })
+            .collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
+
+    /// Test element-wise if values are subnormal (denormalized).
+    /// Returns 1.0 where value is subnormal, 0.0 otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 0.0, 1e-40], Shape::new(vec![3]));
+    /// let b = a.issubnormal();
+    /// // Only 1e-40 is subnormal
+    /// assert_eq!(b.to_vec()[0], 0.0);
+    /// assert_eq!(b.to_vec()[1], 0.0);
+    /// assert_eq!(b.to_vec()[2], 1.0);
+    /// ```
+    pub fn issubnormal(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let result_data: Vec<f32> = data
+            .iter()
+            .map(|&x| if x.is_subnormal() { 1.0 } else { 0.0 })
+            .collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
 }
 
 #[cfg(test)]

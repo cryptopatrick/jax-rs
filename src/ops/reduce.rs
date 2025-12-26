@@ -1427,6 +1427,55 @@ impl Array {
         let product: f32 = data.iter().fold(1.0, |acc, &x| acc * x);
         product.powf(1.0 / data.len() as f32)
     }
+
+    /// Compute percentile of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 5.0, 7.0], Shape::new(vec![5]));
+    /// let p = a.nanpercentile(50.0);
+    /// assert!((p - 4.0).abs() < 1e-6);  // median of [1, 3, 5, 7] = 4
+    /// ```
+    pub fn nanpercentile(&self, q: f32) -> f32 {
+        assert!(q >= 0.0 && q <= 100.0, "Percentile must be in [0, 100]");
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let mut data: Vec<f32> = self.to_vec().into_iter().filter(|x| !x.is_nan()).collect();
+        if data.is_empty() {
+            return f32::NAN;
+        }
+
+        data.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        let n = data.len();
+        let idx = q / 100.0 * (n - 1) as f32;
+        let lo = idx.floor() as usize;
+        let hi = idx.ceil() as usize;
+        let frac = idx - lo as f32;
+
+        if lo == hi {
+            data[lo]
+        } else {
+            data[lo] * (1.0 - frac) + data[hi] * frac
+        }
+    }
+
+    /// Compute quantile of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 5.0, 7.0], Shape::new(vec![5]));
+    /// let q = a.nanquantile(0.5);
+    /// assert!((q - 4.0).abs() < 1e-6);  // median of [1, 3, 5, 7] = 4
+    /// ```
+    pub fn nanquantile(&self, q: f32) -> f32 {
+        assert!(q >= 0.0 && q <= 1.0, "Quantile must be in [0, 1]");
+        self.nanpercentile(q * 100.0)
+    }
 }
 
 #[cfg(test)]

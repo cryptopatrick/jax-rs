@@ -6,6 +6,26 @@ use crate::{buffer::Buffer, Array, DType, Device};
 #[cfg(test)]
 use crate::Shape;
 
+/// Stirling's approximation for lgamma for x >= 7.
+fn lgamma_impl(x: f32) -> f32 {
+    let x64 = x as f64;
+    let c = [
+        76.18009172947146,
+        -86.50532032941677,
+        24.01409824083091,
+        -1.231739572450155,
+        0.1208650973866179e-2,
+        -0.5395239384953e-5,
+    ];
+    let tmp = x64 + 5.5;
+    let tmp = tmp - (x64 + 0.5) * tmp.ln();
+    let mut ser = 1.000000000190015;
+    for (i, &cval) in c.iter().enumerate() {
+        ser += cval / (x64 + (i + 1) as f64);
+    }
+    (-tmp + (2.5066282746310005 * ser / x64).ln()) as f32
+}
+
 /// Apply a unary function element-wise to an array.
 fn unary_op<F>(input: &Array, op: Primitive, f: F) -> Array
 where
@@ -915,6 +935,63 @@ impl Array {
         } else {
             unary_op(self, Primitive::Reciprocal, move |x| x / divisor)
         }
+    }
+
+    /// Compute the modified Bessel function of the first kind, order 0.
+    /// Approximation using polynomial expansion.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 2.0], Shape::new(vec![3]));
+    /// let b = a.i0();
+    /// assert!((b.to_vec()[0] - 1.0).abs() < 1e-4);  // i0(0) = 1
+    /// ```
+    pub fn i0(&self) -> Array {
+        unary_op(self, Primitive::Exp, |x| {
+            // Polynomial approximation for I0
+            let ax = x.abs();
+            if ax < 3.75 {
+                let y = (x / 3.75).powi(2);
+                1.0 + y * (3.5156229 + y * (3.0899424 + y * (1.2067492 + y * (0.2659732 + y * (0.0360768 + y * 0.0045813)))))
+            } else {
+                let y = 3.75 / ax;
+                (ax.exp() / ax.sqrt()) * (0.39894228 + y * (0.01328592 + y * (0.00225319 + y * (-0.00157565 + y * (0.00916281 + y * (-0.02057706 + y * (0.02635537 + y * (-0.01647633 + y * 0.00392377))))))))
+            }
+        })
+    }
+
+    /// Compute the natural logarithm of the absolute value of the gamma function.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 5.0], Shape::new(vec![3]));
+    /// let b = a.lgamma();
+    /// assert!((b.to_vec()[0]).abs() < 1e-6);  // lgamma(1) = 0
+    /// assert!((b.to_vec()[1]).abs() < 1e-6);  // lgamma(2) = 0
+    /// ```
+    pub fn lgamma(&self) -> Array {
+        unary_op(self, Primitive::Log, |x| {
+            // Stirling's approximation for larger values
+            if x <= 0.0 {
+                f32::INFINITY
+            } else if x < 7.0 {
+                // Use recurrence relation for small values
+                let mut n = (7.0 - x).ceil() as i32;
+                let mut y = x;
+                let mut prod = 1.0;
+                for _ in 0..n {
+                    prod *= y;
+                    y += 1.0;
+                }
+                lgamma_impl(y) - prod.ln()
+            } else {
+                lgamma_impl(x)
+            }
+        })
     }
 
 }
