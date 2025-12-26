@@ -561,6 +561,202 @@ impl Array {
 
         Array::from_vec(x, Shape::new(vec![n]))
     }
+
+    /// Compute the outer product of two 1D arrays.
+    ///
+    /// Given two 1D arrays a and b, returns a 2D array of shape (a.len(), b.len())
+    /// where result[i, j] = a[i] * b[j].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 5.0], Shape::new(vec![2]));
+    /// let c = a.outer(&b);
+    /// assert_eq!(c.shape().as_slice(), &[3, 2]);
+    /// // [[1*4, 1*5], [2*4, 2*5], [3*4, 3*5]]
+    /// // = [[4, 5], [8, 10], [12, 15]]
+    /// assert_eq!(c.to_vec(), vec![4.0, 5.0, 8.0, 10.0, 12.0, 15.0]);
+    /// ```
+    pub fn outer(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = other.shape().as_slice();
+
+        assert_eq!(a_shape.len(), 1, "First array must be 1D");
+        assert_eq!(b_shape.len(), 1, "Second array must be 1D");
+
+        let a_data = self.to_vec();
+        let b_data = other.to_vec();
+        let m = a_shape[0];
+        let n = b_shape[0];
+
+        let mut result = Vec::with_capacity(m * n);
+        for &a_val in a_data.iter() {
+            for &b_val in b_data.iter() {
+                result.push(a_val * b_val);
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![m, n]))
+    }
+
+    /// Compute the inner product of two 1D arrays.
+    ///
+    /// For 1D arrays, this is the same as dot product: sum of element-wise products.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+    /// let result = a.inner(&b);
+    /// assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32
+    /// ```
+    pub fn inner(&self, other: &Array) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = other.shape().as_slice();
+
+        assert_eq!(a_shape.len(), 1, "First array must be 1D");
+        assert_eq!(b_shape.len(), 1, "Second array must be 1D");
+        assert_eq!(
+            a_shape[0], b_shape[0],
+            "Arrays must have same length for inner product"
+        );
+
+        let a_data = self.to_vec();
+        let b_data = other.to_vec();
+
+        a_data.iter().zip(b_data.iter()).map(|(a, b)| a * b).sum()
+    }
+
+    /// Compute the cross product of two 3D vectors.
+    ///
+    /// Returns a vector perpendicular to both input vectors.
+    /// Formula: a × b = [a1*b2 - a2*b1, a2*b0 - a0*b2, a0*b1 - a1*b0]
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![0.0, 1.0, 0.0], Shape::new(vec![3]));
+    /// let c = a.cross(&b);
+    /// assert_eq!(c.to_vec(), vec![0.0, 0.0, 1.0]); // i × j = k
+    /// ```
+    pub fn cross(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = other.shape().as_slice();
+
+        assert_eq!(a_shape.len(), 1, "First array must be 1D");
+        assert_eq!(b_shape.len(), 1, "Second array must be 1D");
+        assert_eq!(a_shape[0], 3, "Cross product requires 3D vectors");
+        assert_eq!(b_shape[0], 3, "Cross product requires 3D vectors");
+
+        let a = self.to_vec();
+        let b = other.to_vec();
+
+        let result = vec![
+            a[1] * b[2] - a[2] * b[1],  // i component
+            a[2] * b[0] - a[0] * b[2],  // j component
+            a[0] * b[1] - a[1] * b[0],  // k component
+        ];
+
+        Array::from_vec(result, Shape::new(vec![3]))
+    }
+
+    /// Compute the trace of a 2D array (sum of diagonal elements).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let tr = a.trace();
+    /// assert_eq!(tr, 5.0); // 1 + 4 = 5
+    /// ```
+    pub fn trace(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "Trace requires 2D array");
+        assert_eq!(shape[0], shape[1], "Trace requires square matrix");
+
+        let n = shape[0];
+        let data = self.to_vec();
+
+        let mut sum = 0.0;
+        for i in 0..n {
+            sum += data[i * n + i];
+        }
+        sum
+    }
+
+    /// Extract the diagonal of a 2D array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let diag = a.diagonal();
+    /// assert_eq!(diag.to_vec(), vec![1.0, 5.0]); // Elements at (0,0) and (1,1)
+    /// ```
+    pub fn diagonal(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "Diagonal requires 2D array");
+
+        let (rows, cols) = (shape[0], shape[1]);
+        let diag_len = rows.min(cols);
+        let data = self.to_vec();
+
+        let mut result = Vec::with_capacity(diag_len);
+        for i in 0..diag_len {
+            result.push(data[i * cols + i]);
+        }
+
+        Array::from_vec(result, Shape::new(vec![diag_len]))
+    }
+
+    /// Generate a Vandermonde matrix.
+    ///
+    /// Creates a matrix where each row is the input vector raised to successive powers.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let v = x.vander(4);
+    /// // [[1, 1, 1, 1], [1, 2, 4, 8], [1, 3, 9, 27]]
+    /// ```
+    pub fn vander(&self, n: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 1, "vander() only supports 1D arrays");
+
+        let x = self.to_vec();
+        let m = x.len();
+        let mut result = Vec::with_capacity(m * n);
+
+        for &val in x.iter() {
+            for pow in 0..n {
+                result.push(val.powi(pow as i32));
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![m, n]))
+    }
 }
 
 /// Helper function for n-dimensional transpose.
@@ -694,5 +890,112 @@ mod tests {
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![1, 3]));
         let b = Array::from_vec(vec![4.0, 5.0], Shape::new(vec![2, 1]));
         let _c = a.matmul(&b);
+    }
+
+    #[test]
+    fn test_outer() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![4.0, 5.0], Shape::new(vec![2]));
+        let c = a.outer(&b);
+        assert_eq!(c.shape().as_slice(), &[3, 2]);
+        // [[1*4, 1*5], [2*4, 2*5], [3*4, 3*5]]
+        assert_eq!(c.to_vec(), vec![4.0, 5.0, 8.0, 10.0, 12.0, 15.0]);
+    }
+
+    #[test]
+    fn test_outer_square() {
+        let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+        let b = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+        let c = a.outer(&b);
+        assert_eq!(c.shape().as_slice(), &[2, 2]);
+        // [[1*3, 1*4], [2*3, 2*4]] = [[3, 4], [6, 8]]
+        assert_eq!(c.to_vec(), vec![3.0, 4.0, 6.0, 8.0]);
+    }
+
+    #[test]
+    fn test_inner() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+        let result = a.inner(&b);
+        assert_eq!(result, 32.0); // 1*4 + 2*5 + 3*6 = 32
+    }
+
+    #[test]
+    fn test_inner_zeros() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![0.0, 0.0, 0.0], Shape::new(vec![3]));
+        let result = a.inner(&b);
+        assert_eq!(result, 0.0);
+    }
+
+    #[test]
+    fn test_cross_basic() {
+        // i × j = k
+        let i = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+        let j = Array::from_vec(vec![0.0, 1.0, 0.0], Shape::new(vec![3]));
+        let k = i.cross(&j);
+        assert_eq!(k.to_vec(), vec![0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_cross_general() {
+        let a = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![5.0, 6.0, 7.0], Shape::new(vec![3]));
+        let c = a.cross(&b);
+        // [3*7 - 4*6, 4*5 - 2*7, 2*6 - 3*5]
+        // = [21 - 24, 20 - 14, 12 - 15]
+        // = [-3, 6, -3]
+        assert_eq!(c.to_vec(), vec![-3.0, 6.0, -3.0]);
+    }
+
+    #[test]
+    fn test_cross_anticommutative() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+        let c1 = a.cross(&b);
+        let c2 = b.cross(&a);
+        // a × b = -(b × a)
+        let c2_neg = c2.neg();
+        assert_eq!(c1.to_vec(), c2_neg.to_vec());
+    }
+
+    #[test]
+    fn test_trace() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let tr = a.trace();
+        assert_eq!(tr, 5.0); // 1 + 4
+
+        let b = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            Shape::new(vec![3, 3]),
+        );
+        let tr_b = b.trace();
+        assert_eq!(tr_b, 15.0); // 1 + 5 + 9
+    }
+
+    #[test]
+    fn test_diagonal_square() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let diag = a.diagonal();
+        assert_eq!(diag.to_vec(), vec![1.0, 4.0]);
+    }
+
+    #[test]
+    fn test_diagonal_rectangular() {
+        // 2x3 matrix
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let diag = a.diagonal();
+        assert_eq!(diag.to_vec(), vec![1.0, 5.0]); // min(2, 3) = 2 elements
+
+        // 3x2 matrix
+        let b = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![3, 2]),
+        );
+        let diag_b = b.diagonal();
+        assert_eq!(diag_b.to_vec(), vec![1.0, 4.0]); // min(3, 2) = 2 elements
     }
 }

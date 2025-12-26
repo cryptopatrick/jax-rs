@@ -616,6 +616,66 @@ impl Array {
 
         (rows, cols)
     }
+
+    /// Return numbers spaced evenly on a log scale (geometric progression).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, DType};
+    /// let a = Array::geomspace(1.0, 1000.0, 4, DType::Float32);
+    /// // Result: [1.0, 10.0, 100.0, 1000.0]
+    /// ```
+    pub fn geomspace(start: f32, stop: f32, num: usize, dtype: DType) -> Self {
+        assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
+        assert!(num > 0, "Number of samples must be positive");
+        assert!(start > 0.0 && stop > 0.0, "Start and stop must be positive for geomspace");
+
+        if num == 1 {
+            return Array::from_vec(vec![start], Shape::new(vec![1]));
+        }
+
+        let log_start = start.ln();
+        let log_stop = stop.ln();
+        let step = (log_stop - log_start) / (num - 1) as f32;
+
+        let mut data = Vec::with_capacity(num);
+        for i in 0..num {
+            data.push((log_start + step * i as f32).exp());
+        }
+
+        let device = crate::default_device();
+        let buffer = Buffer::from_f32(data, device);
+        Array::from_buffer(buffer, Shape::new(vec![num]))
+    }
+
+    /// Return numbers spaced evenly on a log scale.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, DType};
+    /// let a = Array::logspace(0.0, 3.0, 4, DType::Float32);
+    /// // Result: [1.0, 10.0, 100.0, 1000.0] (10^0 to 10^3)
+    /// ```
+    pub fn logspace(start: f32, stop: f32, num: usize, dtype: DType) -> Self {
+        assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
+        assert!(num > 0, "Number of samples must be positive");
+
+        if num == 1 {
+            return Array::from_vec(vec![10_f32.powf(start)], Shape::new(vec![1]));
+        }
+
+        let step = (stop - start) / (num - 1) as f32;
+        let mut data = Vec::with_capacity(num);
+        for i in 0..num {
+            data.push(10_f32.powf(start + step * i as f32));
+        }
+
+        let device = crate::default_device();
+        let buffer = Buffer::from_f32(data, device);
+        Array::from_buffer(buffer, Shape::new(vec![num]))
+    }
 }
 
 #[cfg(test)]

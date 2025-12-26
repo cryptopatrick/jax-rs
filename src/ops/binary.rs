@@ -344,6 +344,292 @@ impl Array {
             }
         })
     }
+
+    /// Logarithm of sum of exponentials (numerically stable).
+    ///
+    /// Computes log(exp(x) + exp(y)) in a numerically stable way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let c = a.logaddexp(&b);
+    /// // Result: log(exp(1)+exp(2)), log(exp(2)+exp(3)), log(exp(3)+exp(4))
+    /// ```
+    pub fn logaddexp(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| {
+            let max = a.max(b);
+            max + ((a - max).exp() + (b - max).exp()).ln()
+        })
+    }
+
+    /// Base-2 logarithm of sum of exponentials.
+    ///
+    /// Computes log2(2^x + 2^y) in a numerically stable way.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let c = a.logaddexp2(&b);
+    /// ```
+    pub fn logaddexp2(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| {
+            let max = a.max(b);
+            max + ((a - max).exp2() + (b - max).exp2()).log2()
+        })
+    }
+
+    /// Heaviside step function.
+    ///
+    /// Returns 0 where x < 0, h0 where x == 0, and 1 where x > 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![-1.0, 0.0, 1.0], Shape::new(vec![3]));
+    /// let h0 = Array::from_vec(vec![0.5, 0.5, 0.5], Shape::new(vec![3]));
+    /// let h = x.heaviside(&h0);
+    /// assert_eq!(h.to_vec(), vec![0.0, 0.5, 1.0]);
+    /// ```
+    pub fn heaviside(&self, h0: &Array) -> Array {
+        binary_op(self, h0, Primitive::Max, |x, h0_val| {
+            if x < 0.0 {
+                0.0
+            } else if x == 0.0 {
+                h0_val
+            } else {
+                1.0
+            }
+        })
+    }
+
+    /// Floor division (division rounding toward negative infinity).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![7.0, 7.0, -7.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![3.0, -3.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.floor_divide(&b);
+    /// assert_eq!(c.to_vec(), vec![2.0, -3.0, -3.0]);
+    /// ```
+    pub fn floor_divide(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| (a / b).floor())
+    }
+
+    /// Fused multiply-add: a * b + c.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 3.0, 4.0], Shape::new(vec![3]));
+    /// let c = Array::from_vec(vec![1.0, 1.0, 1.0], Shape::new(vec![3]));
+    /// let result = a.fma(&b, &c);
+    /// assert_eq!(result.to_vec(), vec![3.0, 7.0, 13.0]); // [1*2+1, 2*3+1, 3*4+1]
+    /// ```
+    pub fn fma(&self, b: &Array, c: &Array) -> Array {
+        let product = self.mul(b);
+        product.add(c)
+    }
+
+    /// Greatest common divisor element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![12.0, 15.0, 24.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![8.0, 10.0, 18.0], Shape::new(vec![3]));
+    /// let c = a.gcd(&b);
+    /// assert_eq!(c.to_vec(), vec![4.0, 5.0, 6.0]);
+    /// ```
+    pub fn gcd(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Min, |mut a, mut b| {
+            a = a.abs();
+            b = b.abs();
+            while b > 0.5 {
+                let temp = b;
+                b = a % b;
+                a = temp;
+            }
+            a
+        })
+    }
+
+    /// Least common multiple element-wise.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![12.0, 15.0, 24.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![8.0, 10.0, 18.0], Shape::new(vec![3]));
+    /// let c = a.lcm(&b);
+    /// assert_eq!(c.to_vec(), vec![24.0, 30.0, 72.0]);
+    /// ```
+    pub fn lcm(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Mul, |mut a, mut b| {
+            a = a.abs();
+            b = b.abs();
+            if a < 0.5 || b < 0.5 {
+                return 0.0;
+            }
+            let mut gcd_val = a;
+            let mut temp = b;
+            while temp > 0.5 {
+                let r = gcd_val % temp;
+                gcd_val = temp;
+                temp = r;
+            }
+            (a * b) / gcd_val
+        })
+    }
+
+    /// Bitwise AND operation.
+    /// Operates on the bit representation of Float32 values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![15.0, 31.0, 63.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![7.0, 15.0, 31.0], Shape::new(vec![3]));
+    /// let c = a.bitwise_and(&b);
+    /// ```
+    pub fn bitwise_and(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Min, |a, b| {
+            let a_bits = a.to_bits();
+            let b_bits = b.to_bits();
+            f32::from_bits(a_bits & b_bits)
+        })
+    }
+
+    /// Bitwise OR operation.
+    /// Operates on the bit representation of Float32 values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![8.0, 16.0, 32.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 8.0, 16.0], Shape::new(vec![3]));
+    /// let c = a.bitwise_or(&b);
+    /// ```
+    pub fn bitwise_or(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Max, |a, b| {
+            let a_bits = a.to_bits();
+            let b_bits = b.to_bits();
+            f32::from_bits(a_bits | b_bits)
+        })
+    }
+
+    /// Bitwise XOR operation.
+    /// Operates on the bit representation of Float32 values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![12.0, 15.0, 18.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![10.0, 5.0, 20.0], Shape::new(vec![3]));
+    /// let c = a.bitwise_xor(&b);
+    /// ```
+    pub fn bitwise_xor(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| {
+            let a_bits = a.to_bits();
+            let b_bits = b.to_bits();
+            f32::from_bits(a_bits ^ b_bits)
+        })
+    }
+
+    /// Left bit shift operation.
+    /// Shifts the bit representation of Float32 values left.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.left_shift(&b);
+    /// ```
+    pub fn left_shift(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Mul, |a, b| {
+            let a_bits = a.to_bits();
+            let shift = b as u32;
+            f32::from_bits(a_bits << shift)
+        })
+    }
+
+    /// Right bit shift operation.
+    /// Shifts the bit representation of Float32 values right.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![4.0, 8.0, 16.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.right_shift(&b);
+    /// ```
+    pub fn right_shift(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| {
+            let a_bits = a.to_bits();
+            let shift = b as u32;
+            f32::from_bits(a_bits >> shift)
+        })
+    }
+
+    /// Element-wise maximum, ignoring NaNs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.fmax(&b);
+    /// assert_eq!(c.to_vec()[0], 2.0);
+    /// assert_eq!(c.to_vec()[1], 2.0);
+    /// assert_eq!(c.to_vec()[2], 3.0);
+    /// ```
+    pub fn fmax(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Max, |a, b| {
+            if a.is_nan() { b }
+            else if b.is_nan() { a }
+            else { a.max(b) }
+        })
+    }
+
+    /// Element-wise minimum, ignoring NaNs.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.fmin(&b);
+    /// assert_eq!(c.to_vec()[0], 1.0);
+    /// assert_eq!(c.to_vec()[1], 2.0);
+    /// assert_eq!(c.to_vec()[2], 2.0);
+    /// ```
+    pub fn fmin(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Min, |a, b| {
+            if a.is_nan() { b }
+            else if b.is_nan() { a }
+            else { a.min(b) }
+        })
+    }
 }
 
 #[cfg(test)]

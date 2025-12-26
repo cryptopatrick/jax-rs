@@ -404,6 +404,105 @@ impl Array {
             })
         }
     }
+
+    /// Element-wise greater comparison (alias for gt).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.greater(&b);
+    /// assert_eq!(c.to_vec(), vec![0.0, 0.0, 1.0]);
+    /// ```
+    pub fn greater(&self, other: &Array) -> Array {
+        self.gt(other)
+    }
+
+    /// Element-wise less comparison (alias for lt).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.less(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 0.0, 0.0]);
+    /// ```
+    pub fn less(&self, other: &Array) -> Array {
+        self.lt(other)
+    }
+
+    /// Element-wise greater-or-equal comparison (alias for ge).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.greater_equal(&b);
+    /// assert_eq!(c.to_vec(), vec![0.0, 1.0, 1.0]);
+    /// ```
+    pub fn greater_equal(&self, other: &Array) -> Array {
+        self.ge(other)
+    }
+
+    /// Element-wise less-or-equal comparison (alias for le).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.less_equal(&b);
+    /// assert_eq!(c.to_vec(), vec![1.0, 1.0, 0.0]);
+    /// ```
+    pub fn less_equal(&self, other: &Array) -> Array {
+        self.le(other)
+    }
+
+    /// Test element-wise for real numbers (not infinity or NaN).
+    /// For Float32, returns true for all finite values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let r = a.isreal();
+    /// assert_eq!(r.to_vec(), vec![1.0, 1.0, 1.0]);
+    /// ```
+    pub fn isreal(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let result_data: Vec<f32> = data
+            .iter()
+            .map(|&x| if x.is_finite() { 1.0 } else { 0.0 })
+            .collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
+
+    /// Test element-wise for complex numbers.
+    /// For Float32 arrays, always returns false (0.0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.iscomplex();
+    /// assert_eq!(c.to_vec(), vec![0.0, 0.0, 0.0]);
+    /// ```
+    pub fn iscomplex(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        Array::zeros(self.shape().clone(), DType::Float32)
+    }
 }
 
 #[cfg(test)]

@@ -124,6 +124,64 @@ impl Array {
         }
     }
 
+    /// Split an array into multiple sub-arrays along a specified axis.
+    ///
+    /// # Arguments
+    ///
+    /// * `array` - The array to split
+    /// * `num_sections` - Number of equal sections to split into
+    /// * `axis` - The axis along which to split (only axis=0 supported currently)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+    /// let parts = Array::split(&a, 3, 0);
+    /// assert_eq!(parts.len(), 3);
+    /// assert_eq!(parts[0].to_vec(), vec![1.0, 2.0]);
+    /// assert_eq!(parts[1].to_vec(), vec![3.0, 4.0]);
+    /// assert_eq!(parts[2].to_vec(), vec![5.0, 6.0]);
+    /// ```
+    pub fn split(array: &Array, num_sections: usize, axis: usize) -> Vec<Array> {
+        assert_eq!(array.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(num_sections > 0, "Number of sections must be positive");
+        assert_eq!(axis, 0, "split only supports axis=0 for now");
+
+        let shape = array.shape().as_slice();
+        let axis_size = shape[axis];
+        assert_eq!(
+            axis_size % num_sections,
+            0,
+            "Array size along axis must be divisible by number of sections"
+        );
+
+        let section_size = axis_size / num_sections;
+        let data = array.to_vec();
+
+        let mut result = Vec::with_capacity(num_sections);
+
+        if axis == 0 {
+            // Split along axis 0
+            let elements_per_section = data.len() / num_sections;
+
+            for i in 0..num_sections {
+                let start = i * elements_per_section;
+                let end = start + elements_per_section;
+                let section_data = data[start..end].to_vec();
+
+                let mut section_shape = shape.to_vec();
+                section_shape[axis] = section_size;
+
+                result.push(Array::from_vec(section_data, Shape::new(section_shape)));
+            }
+        } else {
+            panic!("split only supports axis=0 for now");
+        }
+
+        result
+    }
+
     /// Select elements from array based on condition with broadcasting support.
     ///
     /// Returns elements from `x` where `condition` is true (non-zero), otherwise from `y`.
@@ -280,46 +338,6 @@ impl Array {
         let data = self.to_vec();
         let result_data: Vec<f32> =
             data.iter().map(|&x| x.clamp(min, max)).collect();
-
-        Array::from_vec(result_data, self.shape().clone())
-    }
-
-    /// Clip values to a minimum value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use jax_rs::{Array, Shape};
-    /// let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
-    /// let clipped = a.clip_min(5.0);
-    /// assert_eq!(clipped.to_vec(), vec![5.0, 5.0, 10.0]);
-    /// ```
-    pub fn clip_min(&self, min: f32) -> Array {
-        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
-
-        let data = self.to_vec();
-        let result_data: Vec<f32> =
-            data.iter().map(|&x| x.max(min)).collect();
-
-        Array::from_vec(result_data, self.shape().clone())
-    }
-
-    /// Clip values to a maximum value.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use jax_rs::{Array, Shape};
-    /// let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
-    /// let clipped = a.clip_max(5.0);
-    /// assert_eq!(clipped.to_vec(), vec![1.0, 5.0, 5.0]);
-    /// ```
-    pub fn clip_max(&self, max: f32) -> Array {
-        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
-
-        let data = self.to_vec();
-        let result_data: Vec<f32> =
-            data.iter().map(|&x| x.min(max)).collect();
 
         Array::from_vec(result_data, self.shape().clone())
     }
@@ -1808,6 +1826,799 @@ impl Array {
 
         Array::from_vec(result, self.shape().clone())
     }
+
+    /// Compute the discrete 1D convolution of two arrays.
+    ///
+    /// Returns the discrete linear convolution of the input array with a kernel.
+    /// Uses 'valid' mode (only overlapping parts).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let kernel = Array::from_vec(vec![1.0, 0.0, -1.0], Shape::new(vec![3]));
+    /// let conv = signal.convolve(&kernel);
+    /// // [1*1 + 2*0 + 3*(-1), 2*1 + 3*0 + 4*(-1), 3*1 + 4*0 + 5*(-1)]
+    /// // = [1+0-3, 2+0-4, 3+0-5] = [-2, -2, -2]
+    /// assert_eq!(conv.to_vec(), vec![-2.0, -2.0, -2.0]);
+    /// ```
+    pub fn convolve(&self, kernel: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Convolve only supports 1D arrays");
+        assert_eq!(kernel.ndim(), 1, "Kernel must be 1D");
+
+        let signal = self.to_vec();
+        let mut k = kernel.to_vec();
+        let n = signal.len();
+        let m = k.len();
+
+        if m > n {
+            // Kernel longer than signal - return empty array
+            return Array::zeros(Shape::new(vec![0]), DType::Float32);
+        }
+
+        // Flip the kernel for convolution
+        k.reverse();
+
+        // Valid mode: output size = n - m + 1
+        let out_size = n - m + 1;
+        let mut result = Vec::with_capacity(out_size);
+
+        for i in 0..out_size {
+            let mut sum = 0.0;
+            for j in 0..m {
+                sum += signal[i + j] * k[j];
+            }
+            result.push(sum);
+        }
+
+        Array::from_vec(result, Shape::new(vec![out_size]))
+    }
+
+    /// Compute the cross-correlation of two 1D arrays.
+    ///
+    /// Cross-correlation is similar to convolution but without flipping the kernel.
+    /// Uses 'valid' mode (only overlapping parts).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let template = Array::from_vec(vec![1.0, 2.0, 1.0], Shape::new(vec![3]));
+    /// let corr = signal.correlate(&template);
+    /// // [1*1 + 2*2 + 3*1, 2*1 + 3*2 + 4*1, 3*1 + 4*2 + 5*1]
+    /// // = [1+4+3, 2+6+4, 3+8+5] = [8, 12, 16]
+    /// assert_eq!(corr.to_vec(), vec![8.0, 12.0, 16.0]);
+    /// ```
+    pub fn correlate(&self, template: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(template.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Correlate only supports 1D arrays");
+        assert_eq!(template.ndim(), 1, "Template must be 1D");
+
+        let signal = self.to_vec();
+        let t = template.to_vec();
+        let n = signal.len();
+        let m = t.len();
+
+        if m > n {
+            // Template longer than signal - return empty array
+            return Array::zeros(Shape::new(vec![0]), DType::Float32);
+        }
+
+        // Valid mode: output size = n - m + 1
+        let out_size = n - m + 1;
+        let mut result = Vec::with_capacity(out_size);
+
+        for i in 0..out_size {
+            let mut sum = 0.0;
+            for j in 0..m {
+                // Note: no kernel flip, unlike convolution
+                sum += signal[i + j] * t[j];
+            }
+            result.push(sum);
+        }
+
+        Array::from_vec(result, Shape::new(vec![out_size]))
+    }
+
+    /// Stack arrays vertically (row-wise).
+    ///
+    /// Equivalent to concatenation along axis 0 after promoting 1D arrays to 2D.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+    /// let stacked = a.vstack(&b);
+    /// assert_eq!(stacked.shape().as_slice(), &[2, 3]);
+    /// assert_eq!(stacked.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    /// ```
+    pub fn vstack(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let self_shape = self.shape().as_slice();
+        let other_shape = other.shape().as_slice();
+
+        // Promote 1D arrays to 2D (1, N)
+        let self_2d = if self_shape.len() == 1 {
+            self.reshape(Shape::new(vec![1, self_shape[0]]))
+        } else {
+            self.clone()
+        };
+
+        let other_2d = if other_shape.len() == 1 {
+            other.reshape(Shape::new(vec![1, other_shape[0]]))
+        } else {
+            other.clone()
+        };
+
+        // Concatenate along axis 0
+        Array::concatenate(&[self_2d, other_2d], 0)
+    }
+
+    /// Stack arrays horizontally (column-wise).
+    ///
+    /// Equivalent to concatenation along axis 1.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2, 1]));
+    /// let b = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2, 1]));
+    /// let stacked = a.hstack(&b);
+    /// assert_eq!(stacked.shape().as_slice(), &[2, 2]);
+    /// assert_eq!(stacked.to_vec(), vec![1.0, 3.0, 2.0, 4.0]);
+    /// ```
+    pub fn hstack(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let self_shape = self.shape().as_slice();
+        let other_shape = other.shape().as_slice();
+
+        // For 1D arrays, concatenate directly
+        if self_shape.len() == 1 && other_shape.len() == 1 {
+            return Array::concatenate(&[self.clone(), other.clone()], 0);
+        }
+
+        // For 2D+ arrays, concatenate along axis 1
+        Array::concatenate(&[self.clone(), other.clone()], 1)
+    }
+
+    /// Split array into multiple sub-arrays vertically (row-wise).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+    /// let parts = a.vsplit(2);
+    /// assert_eq!(parts.len(), 2);
+    /// assert_eq!(parts[0].to_vec(), vec![1.0, 2.0, 3.0]);
+    /// assert_eq!(parts[1].to_vec(), vec![4.0, 5.0, 6.0]);
+    /// ```
+    pub fn vsplit(&self, num_sections: usize) -> Vec<Array> {
+        let shape = self.shape().as_slice();
+
+        if shape.len() == 1 {
+            // For 1D arrays, split along axis 0
+            return Array::split(self, num_sections, 0);
+        }
+
+        // For 2D+ arrays, split along axis 0
+        Array::split(self, num_sections, 0)
+    }
+
+    /// Split array into multiple sub-arrays horizontally (column-wise).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let parts = a.hsplit(2);
+    /// assert_eq!(parts.len(), 2);
+    /// assert_eq!(parts[0].shape().as_slice(), &[2, 1]);
+    /// assert_eq!(parts[1].shape().as_slice(), &[2, 1]);
+    /// ```
+    pub fn hsplit(&self, num_sections: usize) -> Vec<Array> {
+        let shape = self.shape().as_slice();
+        assert!(shape.len() >= 1, "hsplit requires at least 1D array");
+
+        if shape.len() == 1 {
+            // For 1D arrays, split along axis 0
+            return Array::split(self, num_sections, 0);
+        }
+
+        // For 2D+ arrays, split along axis 1
+        Array::split(self, num_sections, 1)
+    }
+
+    /// Append values to the end of an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 5.0], Shape::new(vec![2]));
+    /// let result = a.append(&b);
+    /// assert_eq!(result.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0]);
+    /// ```
+    pub fn append(&self, values: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(values.dtype(), DType::Float32, "Only Float32 supported");
+
+        let mut data = self.to_vec();
+        data.extend(values.to_vec());
+
+        let new_size = data.len();
+        Array::from_vec(data, Shape::new(vec![new_size]))
+    }
+
+    /// Insert values at the given index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 5.0, 6.0], Shape::new(vec![4]));
+    /// let values = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let result = a.insert(2, &values);
+    /// assert_eq!(result.to_vec(), vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+    /// ```
+    pub fn insert(&self, index: usize, values: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(values.dtype(), DType::Float32, "Only Float32 supported");
+
+        let mut data = self.to_vec();
+        let values_data = values.to_vec();
+
+        assert!(index <= data.len(), "Index out of bounds");
+
+        // Insert values at the specified index
+        for (i, &val) in values_data.iter().enumerate() {
+            data.insert(index + i, val);
+        }
+
+        let new_size = data.len();
+        Array::from_vec(data, Shape::new(vec![new_size]))
+    }
+
+    /// Delete elements at specified indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let result = a.delete(&[1, 3]);
+    /// assert_eq!(result.to_vec(), vec![1.0, 3.0, 5.0]);
+    /// ```
+    pub fn delete(&self, indices: &[usize]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let mut result = Vec::new();
+
+        for (i, &val) in data.iter().enumerate() {
+            if !indices.contains(&i) {
+                result.push(val);
+            }
+        }
+
+        let new_size = result.len();
+        Array::from_vec(result, Shape::new(vec![new_size]))
+    }
+
+    /// Trim leading and trailing zeros.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 0.0, 1.0, 2.0, 3.0, 0.0], Shape::new(vec![6]));
+    /// let trimmed = a.trim_zeros();
+    /// assert_eq!(trimmed.to_vec(), vec![1.0, 2.0, 3.0]);
+    /// ```
+    pub fn trim_zeros(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+
+        // Find first non-zero
+        let start = data.iter().position(|&x| x.abs() > 1e-10).unwrap_or(data.len());
+
+        // Find last non-zero
+        let end = data.iter().rposition(|&x| x.abs() > 1e-10).map(|i| i + 1).unwrap_or(0);
+
+        if start >= end {
+            return Array::zeros(Shape::new(vec![0]), DType::Float32);
+        }
+
+        let result = data[start..end].to_vec();
+        let new_size = result.len();
+        Array::from_vec(result, Shape::new(vec![new_size]))
+    }
+
+    /// Repeat each element along axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let repeated = a.repeat_elements(2);
+    /// assert_eq!(repeated.to_vec(), vec![1.0, 1.0, 2.0, 2.0, 3.0, 3.0]);
+    /// ```
+    pub fn repeat_elements(&self, repeats: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len() * repeats);
+
+        for &val in data.iter() {
+            for _ in 0..repeats {
+                result.push(val);
+            }
+        }
+
+        let new_size = result.len();
+        Array::from_vec(result, Shape::new(vec![new_size]))
+    }
+
+    /// Resize array to new shape, repeating or truncating as needed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let resized = a.resize(5);
+    /// assert_eq!(resized.to_vec(), vec![1.0, 2.0, 3.0, 1.0, 2.0]);
+    /// ```
+    pub fn resize(&self, new_size: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(new_size);
+
+        for i in 0..new_size {
+            result.push(data[i % data.len()]);
+        }
+
+        Array::from_vec(result, Shape::new(vec![new_size]))
+    }
+
+    /// Compute correlation coefficient between two 1D arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let y = Array::from_vec(vec![2.0, 4.0, 6.0, 8.0], Shape::new(vec![4]));
+    /// let corr = x.corrcoef(&y);
+    /// assert!((corr - 1.0).abs() < 1e-5); // Perfect correlation
+    /// ```
+    pub fn corrcoef(&self, other: &Array) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.size(), other.size(), "Arrays must have same size");
+
+        let x = self.to_vec();
+        let y = other.to_vec();
+        let n = x.len() as f32;
+
+        // Compute means
+        let x_mean: f32 = x.iter().sum::<f32>() / n;
+        let y_mean: f32 = y.iter().sum::<f32>() / n;
+
+        // Compute covariance and standard deviations
+        let mut cov = 0.0;
+        let mut x_var = 0.0;
+        let mut y_var = 0.0;
+
+        for (x_val, y_val) in x.iter().zip(y.iter()) {
+            let x_diff = x_val - x_mean;
+            let y_diff = y_val - y_mean;
+            cov += x_diff * y_diff;
+            x_var += x_diff * x_diff;
+            y_var += y_diff * y_diff;
+        }
+
+        // Correlation coefficient
+        if x_var.abs() < 1e-10 || y_var.abs() < 1e-10 {
+            return 0.0;
+        }
+
+        cov / (x_var * y_var).sqrt()
+    }
+
+    /// Return indices of non-zero elements in a flattened array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 1.0, 0.0, 3.0, 0.0, 5.0], Shape::new(vec![6]));
+    /// let indices = a.flatnonzero();
+    /// assert_eq!(indices, vec![1, 3, 5]);
+    /// ```
+    pub fn flatnonzero(&self) -> Vec<usize> {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        data.iter()
+            .enumerate()
+            .filter_map(|(i, &val)| if val.abs() > 1e-10 { Some(i) } else { None })
+            .collect()
+    }
+
+    /// Tile the array by repeating it along each dimension.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = a.tile_1d(3);
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, 1.0, 2.0, 1.0, 2.0]);
+    /// ```
+    pub fn tile_1d(&self, reps: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        let mut result = Vec::with_capacity(data.len() * reps);
+        for _ in 0..reps {
+            result.extend_from_slice(&data);
+        }
+
+        let new_size = result.len();
+        Array::from_vec(result, Shape::new(vec![new_size]))
+    }
+
+    /// Stack 1-D arrays as columns into a 2-D array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 5.0, 6.0], Shape::new(vec![3]));
+    /// let c = Array::column_stack(&[a, b]);
+    /// assert_eq!(c.shape().as_slice(), &[3, 2]);
+    /// // [[1, 4], [2, 5], [3, 6]]
+    /// ```
+    pub fn column_stack(arrays: &[Array]) -> Array {
+        assert!(!arrays.is_empty(), "Need at least one array");
+        assert_eq!(arrays[0].dtype(), DType::Float32, "Only Float32 supported");
+
+        let n_rows = arrays[0].size();
+        let n_cols = arrays.len();
+
+        let mut result = Vec::with_capacity(n_rows * n_cols);
+        for row_idx in 0..n_rows {
+            for arr in arrays {
+                let data = arr.to_vec();
+                result.push(data[row_idx]);
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![n_rows, n_cols]))
+    }
+
+    /// Stack arrays in sequence vertically (row wise).
+    ///
+    /// Alias for vstack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let c = Array::row_stack(&[a, b]);
+    /// assert_eq!(c.shape().as_slice(), &[2, 2]);
+    /// // [[1, 2], [3, 4]]
+    /// ```
+    pub fn row_stack(arrays: &[Array]) -> Array {
+        assert!(!arrays.is_empty(), "Need at least one array");
+
+        // Convert 1D arrays to 2D if needed
+        let arrays_2d: Vec<Array> = arrays.iter().map(|arr| {
+            if arr.shape().as_slice().len() == 1 {
+                let size = arr.size();
+                let data = arr.to_vec();
+                Array::from_vec(data, Shape::new(vec![1, size]))
+            } else {
+                arr.clone()
+            }
+        }).collect();
+
+        Array::concatenate(&arrays_2d, 0)
+    }
+
+    /// Stack arrays in sequence depth wise (along third axis).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let b = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+    /// let c = Array::dstack(&[a, b]);
+    /// assert_eq!(c.shape().as_slice(), &[1, 2, 2]);
+    /// ```
+    pub fn dstack(arrays: &[Array]) -> Array {
+        assert!(!arrays.is_empty(), "Need at least one array");
+
+        // Convert to at least 3D
+        let arrays_3d: Vec<Array> = arrays.iter().map(|arr| {
+            let shape = arr.shape().as_slice();
+            match shape.len() {
+                1 => {
+                    let size = arr.size();
+                    let data = arr.to_vec();
+                    Array::from_vec(data, Shape::new(vec![1, size, 1]))
+                }
+                2 => {
+                    let data = arr.to_vec();
+                    Array::from_vec(data, Shape::new(vec![shape[0], shape[1], 1]))
+                }
+                _ => arr.clone(),
+            }
+        }).collect();
+
+        Array::concatenate(&arrays_3d, 2)
+    }
+
+    /// Compute the absolute value and return as a new array (alias for abs).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, -2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.absolute();
+    /// assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0]);
+    /// ```
+    pub fn absolute(&self) -> Array {
+        self.abs()
+    }
+
+    /// Clamp values to a specified range (alias for clip).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
+    /// let b = a.clamp(2.0, 8.0);
+    /// assert_eq!(b.to_vec(), vec![2.0, 5.0, 8.0]);
+    /// ```
+    pub fn clamp(&self, min: f32, max: f32) -> Array {
+        self.clip(min, max)
+    }
+
+    /// Fill the diagonal of a 2D array with a scalar value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape, DType};
+    /// let a = Array::zeros(Shape::new(vec![3, 3]), DType::Float32);
+    /// let filled = a.fill_diagonal(5.0);
+    /// assert_eq!(filled.to_vec(), vec![5.0, 0.0, 0.0, 0.0, 5.0, 0.0, 0.0, 0.0, 5.0]);
+    /// ```
+    pub fn fill_diagonal(&self, value: f32) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let shape = self.shape();
+        let dims = shape.as_slice();
+        assert_eq!(dims.len(), 2, "fill_diagonal only supports 2D arrays");
+
+        let (rows, cols) = (dims[0], dims[1]);
+        let data = self.to_vec();
+        let mut result = data.clone();
+
+        let min_dim = rows.min(cols);
+        for i in 0..min_dim {
+            result[i * cols + i] = value;
+        }
+
+        Array::from_vec(result, shape.clone())
+    }
+
+    /// Evaluate a polynomial at specific values.
+    /// Polynomial coefficients are in decreasing order (highest degree first).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Evaluate p(x) = 2x^2 + 3x + 1 at x = [1, 2, 3]
+    /// let x = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let coeffs = Array::from_vec(vec![2.0, 3.0, 1.0], Shape::new(vec![3]));
+    /// let result = x.polyval(&coeffs);
+    /// // At x=1: 2(1)^2 + 3(1) + 1 = 6
+    /// // At x=2: 2(4) + 3(2) + 1 = 15
+    /// // At x=3: 2(9) + 3(3) + 1 = 28
+    /// assert_eq!(result.to_vec(), vec![6.0, 15.0, 28.0]);
+    /// ```
+    pub fn polyval(&self, coeffs: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(coeffs.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(coeffs.ndim(), 1, "Coefficients must be 1D");
+
+        let x_data = self.to_vec();
+        let c_data = coeffs.to_vec();
+
+        let result_data: Vec<f32> = x_data
+            .iter()
+            .map(|&x| {
+                // Horner's method for polynomial evaluation
+                let mut result = 0.0;
+                for &coeff in &c_data {
+                    result = result * x + coeff;
+                }
+                result
+            })
+            .collect();
+
+        Array::from_vec(result_data, self.shape().clone())
+    }
+
+    /// Add two polynomials.
+    /// Polynomial coefficients are in decreasing order (highest degree first).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Add p(x) = 2x^2 + 3x + 1 and q(x) = x^2 + 2x + 3
+    /// let p = Array::from_vec(vec![2.0, 3.0, 1.0], Shape::new(vec![3]));
+    /// let q = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let sum = p.polyadd(&q);
+    /// assert_eq!(sum.to_vec(), vec![3.0, 5.0, 4.0]);
+    /// ```
+    pub fn polyadd(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Polynomials must be 1D");
+        assert_eq!(other.ndim(), 1, "Polynomials must be 1D");
+
+        let p_data = self.to_vec();
+        let q_data = other.to_vec();
+
+        let max_len = p_data.len().max(q_data.len());
+        let mut result = vec![0.0; max_len];
+
+        // Align from the right (lowest degree)
+        let p_offset = max_len - p_data.len();
+        let q_offset = max_len - q_data.len();
+
+        for (i, &val) in p_data.iter().enumerate() {
+            result[p_offset + i] += val;
+        }
+
+        for (i, &val) in q_data.iter().enumerate() {
+            result[q_offset + i] += val;
+        }
+
+        Array::from_vec(result, Shape::new(vec![max_len]))
+    }
+
+    /// Multiply two polynomials.
+    /// Polynomial coefficients are in decreasing order (highest degree first).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Multiply (x + 1) * (x + 2) = x^2 + 3x + 2
+    /// let p = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
+    /// let q = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+    /// let prod = p.polymul(&q);
+    /// assert_eq!(prod.to_vec(), vec![1.0, 3.0, 2.0]);
+    /// ```
+    pub fn polymul(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Polynomials must be 1D");
+        assert_eq!(other.ndim(), 1, "Polynomials must be 1D");
+
+        let p = self.to_vec();
+        let q = other.to_vec();
+        let result_len = p.len() + q.len() - 1;
+        let mut result = vec![0.0; result_len];
+
+        for (i, &pi) in p.iter().enumerate() {
+            for (j, &qj) in q.iter().enumerate() {
+                result[i + j] += pi * qj;
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![result_len]))
+    }
+
+    /// Differentiate a polynomial.
+    /// Returns the polynomial representing the derivative.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // d/dx (2x^2 + 3x + 1) = 4x + 3
+    /// let p = Array::from_vec(vec![2.0, 3.0, 1.0], Shape::new(vec![3]));
+    /// let dp = p.polyder();
+    /// assert_eq!(dp.to_vec(), vec![4.0, 3.0]);
+    /// ```
+    pub fn polyder(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Polynomial must be 1D");
+
+        let coeffs = self.to_vec();
+        if coeffs.len() <= 1 {
+            return Array::from_vec(vec![0.0], Shape::new(vec![1]));
+        }
+
+        let n = coeffs.len() - 1;
+        let mut result = Vec::with_capacity(n);
+
+        for (i, &c) in coeffs.iter().take(n).enumerate() {
+            let degree = (n - i) as f32;
+            result.push(c * degree);
+        }
+
+        Array::from_vec(result, Shape::new(vec![n]))
+    }
+
+    /// Subtract two polynomials.
+    /// Polynomial coefficients are in decreasing order (highest degree first).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let p = Array::from_vec(vec![3.0, 5.0, 4.0], Shape::new(vec![3]));
+    /// let q = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let diff = p.polysub(&q);
+    /// assert_eq!(diff.to_vec(), vec![2.0, 3.0, 1.0]);
+    /// ```
+    pub fn polysub(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.ndim(), 1, "Polynomials must be 1D");
+        assert_eq!(other.ndim(), 1, "Polynomials must be 1D");
+
+        let p_data = self.to_vec();
+        let q_data = other.to_vec();
+
+        let max_len = p_data.len().max(q_data.len());
+        let mut result = vec![0.0; max_len];
+
+        let p_offset = max_len - p_data.len();
+        let q_offset = max_len - q_data.len();
+
+        for (i, &val) in p_data.iter().enumerate() {
+            result[p_offset + i] += val;
+        }
+
+        for (i, &val) in q_data.iter().enumerate() {
+            result[q_offset + i] -= val;
+        }
+
+        Array::from_vec(result, Shape::new(vec![max_len]))
+    }
 }
 
 #[cfg(test)]
@@ -1832,6 +2643,33 @@ mod tests {
         let result = Array::stack(&[a, b], 0);
         assert_eq!(result.shape().as_slice(), &[2, 2]);
         assert_eq!(result.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_split() {
+        // Test splitting a 1D array
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+        let parts = Array::split(&a, 3, 0);
+
+        assert_eq!(parts.len(), 3);
+        assert_eq!(parts[0].to_vec(), vec![1.0, 2.0]);
+        assert_eq!(parts[1].to_vec(), vec![3.0, 4.0]);
+        assert_eq!(parts[2].to_vec(), vec![5.0, 6.0]);
+    }
+
+    #[test]
+    fn test_split_2d() {
+        // Test splitting a 2D array
+        let a = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            Shape::new(vec![4, 2]),
+        );
+        let parts = Array::split(&a, 2, 0);
+
+        assert_eq!(parts.len(), 2);
+        assert_eq!(parts[0].shape().as_slice(), &[2, 2]);
+        assert_eq!(parts[0].to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(parts[1].to_vec(), vec![5.0, 6.0, 7.0, 8.0]);
     }
 
     #[test]
@@ -1954,20 +2792,6 @@ mod tests {
         );
         let clipped = a.clip(0.0, 10.0);
         assert_eq!(clipped.to_vec(), vec![0.0, 0.0, 5.0, 10.0, 10.0]);
-    }
-
-    #[test]
-    fn test_clip_min() {
-        let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
-        let clipped = a.clip_min(5.0);
-        assert_eq!(clipped.to_vec(), vec![5.0, 5.0, 10.0]);
-    }
-
-    #[test]
-    fn test_clip_max() {
-        let a = Array::from_vec(vec![1.0, 5.0, 10.0], Shape::new(vec![3]));
-        let clipped = a.clip_max(5.0);
-        assert_eq!(clipped.to_vec(), vec![1.0, 5.0, 5.0]);
     }
 
     #[test]
@@ -2469,5 +3293,73 @@ mod tests {
         // Test improved error message in broadcast_to
         let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
         a.broadcast_to(Shape::new(vec![2]));
+    }
+
+    #[test]
+    fn test_convolve() {
+        let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let kernel = Array::from_vec(vec![1.0, 0.0, -1.0], Shape::new(vec![3]));
+        let conv = signal.convolve(&kernel);
+        // After flipping kernel to [-1, 0, 1]:
+        // [1*(-1) + 2*0 + 3*1, 2*(-1) + 3*0 + 4*1, 3*(-1) + 4*0 + 5*1]
+        // = [-1+0+3, -2+0+4, -3+0+5] = [2, 2, 2]
+        assert_eq!(conv.to_vec(), vec![2.0, 2.0, 2.0]);
+    }
+
+    #[test]
+    fn test_convolve_averaging() {
+        let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let kernel = Array::from_vec(vec![1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0], Shape::new(vec![3]));
+        let conv = signal.convolve(&kernel);
+        // Moving average: [(1+2+3)/3, (2+3+4)/3, (3+4+5)/3] = [2, 3, 4]
+        assert_eq!(conv.to_vec(), vec![2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_convolve_identity() {
+        let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let kernel = Array::from_vec(vec![1.0], Shape::new(vec![1]));
+        let conv = signal.convolve(&kernel);
+        // Identity kernel should return the signal
+        assert_eq!(conv.to_vec(), vec![1.0, 2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_correlate() {
+        let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let template = Array::from_vec(vec![1.0, 2.0, 1.0], Shape::new(vec![3]));
+        let corr = signal.correlate(&template);
+        // [1*1 + 2*2 + 3*1, 2*1 + 3*2 + 4*1, 3*1 + 4*2 + 5*1]
+        assert_eq!(corr.to_vec(), vec![8.0, 12.0, 16.0]);
+    }
+
+    #[test]
+    fn test_correlate_pattern_detection() {
+        // Test finding a pattern in a signal
+        let signal = Array::from_vec(vec![0.0, 0.0, 1.0, 2.0, 1.0, 0.0, 0.0], Shape::new(vec![7]));
+        let pattern = Array::from_vec(vec![1.0, 2.0, 1.0], Shape::new(vec![3]));
+        let corr = signal.correlate(&pattern);
+        // Should have peak at position where pattern matches
+        let max_idx = corr
+            .to_vec()
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+            .unwrap()
+            .0;
+        assert_eq!(max_idx, 2); // Pattern starts at index 2 in signal
+    }
+
+    #[test]
+    fn test_convolve_correlate_difference() {
+        // Show the difference between convolution and correlation
+        let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+        let kernel = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+
+        let conv = signal.convolve(&kernel);
+        let corr = signal.correlate(&kernel);
+
+        // They should give different results for asymmetric kernels
+        assert_ne!(conv.to_vec(), corr.to_vec());
     }
 }

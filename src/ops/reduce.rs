@@ -1015,6 +1015,212 @@ impl Array {
         Array::from_vec(result, output_shape)
     }
 
+    /// Compute the gradient (numerical derivative) of an array.
+    ///
+    /// For an array [a, b, c, d], returns [b-a, (c-a)/2, (d-b)/2, d-c].
+    /// Uses forward differences at the start, backward differences at the end,
+    /// and central differences in the middle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 4.0, 7.0], Shape::new(vec![4]));
+    /// let grad = a.gradient();
+    /// // [2-1, (4-1)/2, (7-2)/2, 7-4] = [1.0, 1.5, 2.5, 3.0]
+    /// assert_eq!(grad.to_vec(), vec![1.0, 1.5, 2.5, 3.0]);
+    /// ```
+    pub fn gradient(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let n = data.len();
+
+        if n == 0 {
+            return self.clone();
+        }
+
+        if n == 1 {
+            return Array::from_vec(vec![0.0], self.shape().clone());
+        }
+
+        let mut result = Vec::with_capacity(n);
+
+        // Forward difference at start
+        result.push(data[1] - data[0]);
+
+        // Central differences in the middle
+        for i in 1..n - 1 {
+            result.push((data[i + 1] - data[i - 1]) / 2.0);
+        }
+
+        // Backward difference at end
+        result.push(data[n - 1] - data[n - 2]);
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Compute differences between consecutive elements (edge differences).
+    ///
+    /// This is equivalent to diff but specifically meant for edge detection.
+    /// Returns an array of length n-1 where result[i] = array[i+1] - array[i].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 3.0, 6.0, 10.0], Shape::new(vec![4]));
+    /// let edges = a.ediff1d();
+    /// assert_eq!(edges.to_vec(), vec![2.0, 3.0, 4.0]);
+    /// ```
+    pub fn ediff1d(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        if data.len() == 0 {
+            return Array::zeros(Shape::new(vec![0]), DType::Float32);
+        }
+
+        if data.len() == 1 {
+            return Array::zeros(Shape::new(vec![0]), DType::Float32);
+        }
+
+        let mut result = Vec::with_capacity(data.len() - 1);
+        for i in 0..data.len() - 1 {
+            result.push(data[i + 1] - data[i]);
+        }
+
+        let len = result.len();
+        Array::from_vec(result, Shape::new(vec![len]))
+    }
+
+    /// Find the index of the maximum value, ignoring NaN.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 5.0, 3.0], Shape::new(vec![4]));
+    /// let idx = a.nanargmax();
+    /// assert_eq!(idx, 2); // Index of 5.0
+    /// ```
+    pub fn nanargmax(&self) -> usize {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        let mut max_val = f32::NEG_INFINITY;
+        let mut max_idx = 0;
+
+        for (i, &val) in data.iter().enumerate() {
+            if !val.is_nan() && val > max_val {
+                max_val = val;
+                max_idx = i;
+            }
+        }
+
+        max_idx
+    }
+
+    /// Find the index of the minimum value, ignoring NaN.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, f32::NAN, 1.0, 3.0], Shape::new(vec![4]));
+    /// let idx = a.nanargmin();
+    /// assert_eq!(idx, 2); // Index of 1.0
+    /// ```
+    pub fn nanargmin(&self) -> usize {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+
+        let mut min_val = f32::INFINITY;
+        let mut min_idx = 0;
+
+        for (i, &val) in data.iter().enumerate() {
+            if !val.is_nan() && val < min_val {
+                min_val = val;
+                min_idx = i;
+            }
+        }
+
+        min_idx
+    }
+
+    /// Compute the weighted average of an array.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let values = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let weights = Array::from_vec(vec![1.0, 1.0, 1.0, 1.0], Shape::new(vec![4]));
+    /// let avg = values.average(&weights);
+    /// assert_eq!(avg, 2.5);
+    /// ```
+    pub fn average(&self, weights: &Array) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(weights.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            self.size(),
+            weights.size(),
+            "Values and weights must have same size"
+        );
+
+        let data = self.to_vec();
+        let weight_data = weights.to_vec();
+
+        let weighted_sum: f32 = data
+            .iter()
+            .zip(weight_data.iter())
+            .map(|(v, w)| v * w)
+            .sum();
+
+        let weight_sum: f32 = weight_data.iter().sum();
+
+        weighted_sum / weight_sum
+    }
+
+    /// Compute covariance between two arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let y = Array::from_vec(vec![2.0, 4.0, 6.0, 8.0], Shape::new(vec![4]));
+    /// let cov = x.cov(&y);
+    /// // Covariance should be positive since both increase together
+    /// ```
+    pub fn cov(&self, other: &Array) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            self.size(),
+            other.size(),
+            "Arrays must have same size for covariance"
+        );
+
+        let x = self.to_vec();
+        let y = other.to_vec();
+        let n = x.len() as f32;
+
+        if n == 0.0 {
+            return 0.0;
+        }
+
+        let x_mean: f32 = x.iter().sum::<f32>() / n;
+        let y_mean: f32 = y.iter().sum::<f32>() / n;
+
+        let cov: f32 = x
+            .iter()
+            .zip(y.iter())
+            .map(|(&xi, &yi)| (xi - x_mean) * (yi - y_mean))
+            .sum();
+
+        cov / (n - 1.0)
+    }
+
     // Helper function to compute flat index given output index and axis position
     fn compute_axis_index(
         &self,
@@ -1327,5 +1533,44 @@ mod tests {
         let integral = a.trapz_axis(1);
         assert_eq!(integral.shape().as_slice(), &[2]);
         assert_eq!(integral.to_vec(), vec![4.0, 10.0]);
+    }
+
+    #[test]
+    fn test_gradient() {
+        let a = Array::from_vec(vec![1.0, 2.0, 4.0, 7.0], Shape::new(vec![4]));
+        let grad = a.gradient();
+        // [2-1, (4-1)/2, (7-2)/2, 7-4] = [1.0, 1.5, 2.5, 3.0]
+        assert_eq!(grad.to_vec(), vec![1.0, 1.5, 2.5, 3.0]);
+    }
+
+    #[test]
+    fn test_gradient_constant() {
+        let a = Array::from_vec(vec![5.0, 5.0, 5.0, 5.0], Shape::new(vec![4]));
+        let grad = a.gradient();
+        // All gradients should be 0 for constant function
+        assert_eq!(grad.to_vec(), vec![0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn test_gradient_linear() {
+        let a = Array::from_vec(vec![0.0, 1.0, 2.0, 3.0], Shape::new(vec![4]));
+        let grad = a.gradient();
+        // All gradients should be 1.0 for linear function
+        assert_eq!(grad.to_vec(), vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn test_ediff1d() {
+        let a = Array::from_vec(vec![1.0, 3.0, 6.0, 10.0], Shape::new(vec![4]));
+        let edges = a.ediff1d();
+        assert_eq!(edges.to_vec(), vec![2.0, 3.0, 4.0]);
+    }
+
+    #[test]
+    fn test_ediff1d_single() {
+        let a = Array::from_vec(vec![5.0], Shape::new(vec![1]));
+        let edges = a.ediff1d();
+        assert_eq!(edges.shape().as_slice(), &[0]);
+        assert_eq!(edges.size(), 0);
     }
 }

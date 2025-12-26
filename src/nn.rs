@@ -1286,6 +1286,149 @@ pub fn global_avg_pool(x: &Array) -> f32 {
     x.mean_all()
 }
 
+/// Adaptive average pooling 1D - pools to a specific output size.
+///
+/// Automatically computes kernel size and stride to achieve the target output size.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape (length,) or (batch, length)
+/// * `output_size` - Target output length
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+/// let y = nn::adaptive_avg_pool1d(&x, 3);
+/// // Pools [1,2] -> 1.5, [3,4] -> 3.5, [5,6] -> 5.5
+/// assert_eq!(y.to_vec(), vec![1.5, 3.5, 5.5]);
+/// ```
+pub fn adaptive_avg_pool1d(x: &Array, output_size: usize) -> Array {
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+
+    match shape.len() {
+        1 => {
+            let length = shape[0];
+            let mut result = Vec::with_capacity(output_size);
+
+            for i in 0..output_size {
+                let start = (i * length) / output_size;
+                let end = ((i + 1) * length) / output_size;
+                let sum: f32 = data[start..end].iter().sum();
+                result.push(sum / (end - start) as f32);
+            }
+
+            Array::from_vec(result, Shape::new(vec![output_size]))
+        }
+        2 => {
+            let batch = shape[0];
+            let length = shape[1];
+            let mut result = Vec::with_capacity(batch * output_size);
+
+            for b in 0..batch {
+                for i in 0..output_size {
+                    let start = (i * length) / output_size;
+                    let end = ((i + 1) * length) / output_size;
+                    let offset = b * length;
+                    let sum: f32 = data[offset + start..offset + end].iter().sum();
+                    result.push(sum / (end - start) as f32);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, output_size]))
+        }
+        _ => panic!("adaptive_avg_pool1d expects 1D or 2D input"),
+    }
+}
+
+/// Adaptive average pooling 2D - pools to a specific output size.
+///
+/// Automatically computes kernel size and stride to achieve the target output size.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape (height, width) or (batch, height, width)
+/// * `output_size` - Target output size (height, width)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(
+///     vec![1.0, 2.0, 3.0, 4.0,
+///          5.0, 6.0, 7.0, 8.0,
+///          9.0, 10.0, 11.0, 12.0,
+///          13.0, 14.0, 15.0, 16.0],
+///     Shape::new(vec![4, 4])
+/// );
+/// let y = nn::adaptive_avg_pool2d(&x, (2, 2));
+/// // Pools 4x4 -> 2x2
+/// ```
+pub fn adaptive_avg_pool2d(x: &Array, output_size: (usize, usize)) -> Array {
+    let data = x.to_vec();
+    let shape = x.shape().as_slice();
+    let (out_h, out_w) = output_size;
+
+    match shape.len() {
+        2 => {
+            let (h, w) = (shape[0], shape[1]);
+            let mut result = Vec::with_capacity(out_h * out_w);
+
+            for oh in 0..out_h {
+                for ow in 0..out_w {
+                    let h_start = (oh * h) / out_h;
+                    let h_end = ((oh + 1) * h) / out_h;
+                    let w_start = (ow * w) / out_w;
+                    let w_end = ((ow + 1) * w) / out_w;
+
+                    let mut sum = 0.0;
+                    let mut count = 0;
+                    for i in h_start..h_end {
+                        for j in w_start..w_end {
+                            sum += data[i * w + j];
+                            count += 1;
+                        }
+                    }
+                    result.push(sum / count as f32);
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![out_h, out_w]))
+        }
+        3 => {
+            let (batch, h, w) = (shape[0], shape[1], shape[2]);
+            let mut result = Vec::with_capacity(batch * out_h * out_w);
+
+            for b in 0..batch {
+                for oh in 0..out_h {
+                    for ow in 0..out_w {
+                        let h_start = (oh * h) / out_h;
+                        let h_end = ((oh + 1) * h) / out_h;
+                        let w_start = (ow * w) / out_w;
+                        let w_end = ((ow + 1) * w) / out_w;
+
+                        let mut sum = 0.0;
+                        let mut count = 0;
+                        for i in h_start..h_end {
+                            for j in w_start..w_end {
+                                let idx = b * (h * w) + i * w + j;
+                                sum += data[idx];
+                                count += 1;
+                            }
+                        }
+                        result.push(sum / count as f32);
+                    }
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![batch, out_h, out_w]))
+        }
+        _ => panic!("adaptive_avg_pool2d expects 2D or 3D input"),
+    }
+}
+
 /// Scaled dot-product attention mechanism.
 ///
 /// Computes attention(Q, K, V) = softmax(Q @ K^T / sqrt(d_k)) @ V
@@ -1365,6 +1508,134 @@ pub fn scaled_dot_product_attention(query: &Array, key: &Array, value: &Array) -
 
     // Multiply attention weights by values: attention_weights @ V
     attention_weights_array.matmul(value)
+}
+
+/// Multi-head attention mechanism.
+///
+/// Applies multiple attention heads in parallel and concatenates the results.
+/// This is a core component of Transformer architectures.
+///
+/// # Arguments
+///
+/// * `query` - Query matrix of shape [seq_len_q, d_model]
+/// * `key` - Key matrix of shape [seq_len_k, d_model]
+/// * `value` - Value matrix of shape [seq_len_k, d_model]
+/// * `num_heads` - Number of attention heads
+/// * `w_q` - Query projection weights of shape [d_model, d_model]
+/// * `w_k` - Key projection weights of shape [d_model, d_model]
+/// * `w_v` - Value projection weights of shape [d_model, d_model]
+/// * `w_o` - Output projection weights of shape [d_model, d_model]
+///
+/// # Returns
+///
+/// Attention output of shape [seq_len_q, d_model]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let seq_len = 2;
+/// let d_model = 4;
+/// let num_heads = 2;
+///
+/// let q = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.5], Shape::new(vec![seq_len, d_model]));
+/// let k = q.clone();
+/// let v = q.clone();
+///
+/// // Initialize projection weights (identity for simplicity)
+/// let w_q = Array::eye(d_model, None, DType::Float32);
+/// let w_k = Array::eye(d_model, None, DType::Float32);
+/// let w_v = Array::eye(d_model, None, DType::Float32);
+/// let w_o = Array::eye(d_model, None, DType::Float32);
+///
+/// let output = nn::multi_head_attention(&q, &k, &v, num_heads, &w_q, &w_k, &w_v, &w_o);
+/// assert_eq!(output.shape().as_slice(), &[seq_len, d_model]);
+/// ```
+pub fn multi_head_attention(
+    query: &Array,
+    key: &Array,
+    value: &Array,
+    num_heads: usize,
+    w_q: &Array,
+    w_k: &Array,
+    w_v: &Array,
+    w_o: &Array,
+) -> Array {
+    assert_eq!(query.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(query.ndim(), 2, "Query must be 2D [seq_len_q, d_model]");
+    assert_eq!(key.ndim(), 2, "Key must be 2D [seq_len_k, d_model]");
+    assert_eq!(value.ndim(), 2, "Value must be 2D [seq_len_k, d_model]");
+
+    let q_shape = query.shape().as_slice();
+    let k_shape = key.shape().as_slice();
+    let v_shape = value.shape().as_slice();
+
+    let seq_len_q = q_shape[0];
+    let seq_len_k = k_shape[0];
+    let d_model = q_shape[1];
+
+    assert_eq!(d_model, k_shape[1], "Query and Key must have same d_model");
+    assert_eq!(d_model, v_shape[1], "Value must have same d_model");
+    assert_eq!(d_model % num_heads, 0, "d_model must be divisible by num_heads");
+
+    let d_k = d_model / num_heads;
+
+    // Project Q, K, V
+    let q_proj = query.matmul(w_q);
+    let k_proj = key.matmul(w_k);
+    let v_proj = value.matmul(w_v);
+
+    // Split into heads: [seq_len, d_model] -> [num_heads, seq_len, d_k]
+    let q_data = q_proj.to_vec();
+    let k_data = k_proj.to_vec();
+    let v_data = v_proj.to_vec();
+
+    let mut head_outputs = Vec::with_capacity(num_heads);
+
+    for h in 0..num_heads {
+        // Extract head h from Q, K, V
+        let mut q_head_data = Vec::with_capacity(seq_len_q * d_k);
+        let mut k_head_data = Vec::with_capacity(seq_len_k * d_k);
+        let mut v_head_data = Vec::with_capacity(seq_len_k * d_k);
+
+        for i in 0..seq_len_q {
+            for j in 0..d_k {
+                q_head_data.push(q_data[i * d_model + h * d_k + j]);
+            }
+        }
+
+        for i in 0..seq_len_k {
+            for j in 0..d_k {
+                k_head_data.push(k_data[i * d_model + h * d_k + j]);
+                v_head_data.push(v_data[i * d_model + h * d_k + j]);
+            }
+        }
+
+        let q_head = Array::from_vec(q_head_data, Shape::new(vec![seq_len_q, d_k]));
+        let k_head = Array::from_vec(k_head_data, Shape::new(vec![seq_len_k, d_k]));
+        let v_head = Array::from_vec(v_head_data, Shape::new(vec![seq_len_k, d_k]));
+
+        // Apply scaled dot-product attention for this head
+        let head_output = scaled_dot_product_attention(&q_head, &k_head, &v_head);
+        head_outputs.push(head_output);
+    }
+
+    // Concatenate heads: [num_heads, seq_len_q, d_k] -> [seq_len_q, d_model]
+    let mut concat_data = vec![0.0; seq_len_q * d_model];
+
+    for h in 0..num_heads {
+        let head_data = head_outputs[h].to_vec();
+        for i in 0..seq_len_q {
+            for j in 0..d_k {
+                concat_data[i * d_model + h * d_k + j] = head_data[i * d_k + j];
+            }
+        }
+    }
+
+    let concat_array = Array::from_vec(concat_data, Shape::new(vec![seq_len_q, d_model]));
+
+    // Apply output projection
+    concat_array.matmul(w_o)
 }
 
 /// 1D convolution operation.
@@ -2411,6 +2682,85 @@ mod tests {
     }
 
     #[test]
+    fn test_adaptive_avg_pool1d_basic() {
+        // Test adaptive average pooling 1D
+        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+        let result = adaptive_avg_pool1d(&x, 3);
+        assert_eq!(result.shape().as_slice(), &[3]);
+        // [1,2] -> 1.5, [3,4] -> 3.5, [5,6] -> 5.5
+        assert_eq!(result.to_vec(), vec![1.5, 3.5, 5.5]);
+    }
+
+    #[test]
+    fn test_adaptive_avg_pool1d_batched() {
+        // Test batched adaptive average pooling 1D
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
+            Shape::new(vec![2, 4]),
+        );
+        let result = adaptive_avg_pool1d(&x, 2);
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+        // Batch 0: [1,2] -> 1.5, [3,4] -> 3.5
+        // Batch 1: [5,6] -> 5.5, [7,8] -> 7.5
+        assert_eq!(result.to_vec(), vec![1.5, 3.5, 5.5, 7.5]);
+    }
+
+    #[test]
+    fn test_adaptive_avg_pool2d_basic() {
+        // Test adaptive average pooling 2D
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+            ],
+            Shape::new(vec![4, 4]),
+        );
+        let result = adaptive_avg_pool2d(&x, (2, 2));
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+        // Top-left: avg(1,2,5,6) = 3.5
+        // Top-right: avg(3,4,7,8) = 5.5
+        // Bottom-left: avg(9,10,13,14) = 11.5
+        // Bottom-right: avg(11,12,15,16) = 13.5
+        assert_eq!(result.to_vec(), vec![3.5, 5.5, 11.5, 13.5]);
+    }
+
+    #[test]
+    fn test_adaptive_avg_pool2d_non_uniform() {
+        // Test adaptive pooling with non-uniform division
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let result = adaptive_avg_pool2d(&x, (1, 2));
+        assert_eq!(result.shape().as_slice(), &[1, 2]);
+        // Pools 2x3 to 1x2
+        // Left (col 0): avg(1,4) = 2.5
+        // Right (cols 1-2): avg(2,3,5,6) = 4.0
+        let output = result.to_vec();
+        assert!((output[0] - 2.5).abs() < 1e-5);
+        assert!((output[1] - 4.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_adaptive_avg_pool2d_batched() {
+        // Test batched adaptive average pooling 2D
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+            ],
+            Shape::new(vec![2, 2, 2]),
+        );
+        let result = adaptive_avg_pool2d(&x, (1, 1));
+        assert_eq!(result.shape().as_slice(), &[2, 1, 1]);
+        // Batch 0: avg(1,2,3,4) = 2.5
+        // Batch 1: avg(5,6,7,8) = 6.5
+        assert_eq!(result.to_vec(), vec![2.5, 6.5]);
+    }
+
+    #[test]
     fn test_scaled_dot_product_attention_basic() {
         // Test basic attention mechanism
         // Q, K, V are identity matrices - should produce V as output
@@ -2453,5 +2803,84 @@ mod tests {
         let output = scaled_dot_product_attention(&q, &k, &v);
         // Output should have shape [seq_len_q, d_v] = [3, 1]
         assert_eq!(output.shape().as_slice(), &[3, 1]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_basic() {
+        // Test multi-head attention with 2 heads
+        let seq_len = 2;
+        let d_model = 4;
+        let num_heads = 2;
+
+        let q = Array::from_vec(
+            vec![1.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.5],
+            Shape::new(vec![seq_len, d_model]),
+        );
+        let k = q.clone();
+        let v = q.clone();
+
+        // Use identity matrices for projection weights (simplified)
+        let w_q = Array::eye(d_model, None, DType::Float32);
+        let w_k = Array::eye(d_model, None, DType::Float32);
+        let w_v = Array::eye(d_model, None, DType::Float32);
+        let w_o = Array::eye(d_model, None, DType::Float32);
+
+        let output = multi_head_attention(&q, &k, &v, num_heads, &w_q, &w_k, &w_v, &w_o);
+
+        // Output should have shape [seq_len, d_model]
+        assert_eq!(output.shape().as_slice(), &[seq_len, d_model]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_different_seq_lengths() {
+        // Test with different query and key/value sequence lengths
+        let seq_len_q = 3;
+        let seq_len_k = 2;
+        let d_model = 4;
+        let num_heads = 2;
+
+        let q = Array::from_vec(
+            vec![1.0, 0.0, 0.0, 1.0,
+                 0.5, 0.5, 0.5, 0.5,
+                 0.0, 1.0, 1.0, 0.0],
+            Shape::new(vec![seq_len_q, d_model]),
+        );
+        let k = Array::from_vec(
+            vec![1.0, 0.0, 0.0, 1.0,
+                 0.5, 0.5, 0.5, 0.5],
+            Shape::new(vec![seq_len_k, d_model]),
+        );
+        let v = k.clone();
+
+        let w_q = Array::eye(d_model, None, DType::Float32);
+        let w_k = Array::eye(d_model, None, DType::Float32);
+        let w_v = Array::eye(d_model, None, DType::Float32);
+        let w_o = Array::eye(d_model, None, DType::Float32);
+
+        let output = multi_head_attention(&q, &k, &v, num_heads, &w_q, &w_k, &w_v, &w_o);
+
+        // Output should have shape [seq_len_q, d_model]
+        assert_eq!(output.shape().as_slice(), &[seq_len_q, d_model]);
+    }
+
+    #[test]
+    fn test_multi_head_attention_single_head() {
+        // Test with single head (should behave like scaled dot-product attention)
+        let seq_len = 2;
+        let d_model = 2;
+        let num_heads = 1;
+
+        let q = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![seq_len, d_model]));
+        let k = q.clone();
+        let v = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![seq_len, d_model]));
+
+        let w_q = Array::eye(d_model, None, DType::Float32);
+        let w_k = Array::eye(d_model, None, DType::Float32);
+        let w_v = Array::eye(d_model, None, DType::Float32);
+        let w_o = Array::eye(d_model, None, DType::Float32);
+
+        let output = multi_head_attention(&q, &k, &v, num_heads, &w_q, &w_k, &w_v, &w_o);
+
+        assert_eq!(output.shape().as_slice(), &[seq_len, d_model]);
     }
 }
