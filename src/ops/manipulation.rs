@@ -758,11 +758,18 @@ impl Array {
     pub fn broadcast_to(&self, new_shape: Shape) -> Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
 
-        // Check broadcast compatibility
+        // Check broadcast compatibility with better error message
         let _result_shape = self
             .shape()
             .broadcast_with(&new_shape)
-            .expect("Shapes are not broadcast-compatible");
+            .unwrap_or_else(|| {
+                panic!(
+                    "Cannot broadcast array of shape {:?} to shape {:?}. \
+                     Broadcasting requires dimensions to be equal or one of them to be 1.",
+                    self.shape().as_slice(),
+                    new_shape.as_slice()
+                )
+            });
 
         let data = self.to_vec();
         let size = new_shape.size();
@@ -775,6 +782,63 @@ impl Array {
         }
 
         Array::from_vec(result, new_shape)
+    }
+
+    /// Broadcast multiple arrays to a common shape.
+    ///
+    /// All arrays are broadcast to a shape that is compatible with all inputs.
+    /// The result shape is determined by the broadcast rules applied successively.
+    ///
+    /// # Arguments
+    ///
+    /// * `arrays` - Slice of arrays to broadcast
+    ///
+    /// # Returns
+    ///
+    /// Vector of arrays, all broadcast to the same shape
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape, ops::manipulation};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![10.0, 20.0], Shape::new(vec![2, 1]));
+    /// let broadcasted = manipulation::broadcast_arrays(&[a, b]);
+    ///
+    /// // Both should have shape [2, 3]
+    /// assert_eq!(broadcasted[0].shape().as_slice(), &[2, 3]);
+    /// assert_eq!(broadcasted[1].shape().as_slice(), &[2, 3]);
+    /// ```
+    pub fn broadcast_arrays(arrays: &[Array]) -> Vec<Array> {
+        if arrays.is_empty() {
+            return vec![];
+        }
+
+        if arrays.len() == 1 {
+            return vec![arrays[0].clone()];
+        }
+
+        // Find the common broadcast shape
+        let mut common_shape = arrays[0].shape().clone();
+
+        for array in &arrays[1..] {
+            common_shape = common_shape
+                .broadcast_with(array.shape())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Cannot broadcast arrays with shapes {:?} and {:?}. \
+                         Broadcasting requires dimensions to be equal or one of them to be 1.",
+                        common_shape.as_slice(),
+                        array.shape().as_slice()
+                    )
+                });
+        }
+
+        // Broadcast all arrays to the common shape
+        arrays
+            .iter()
+            .map(|arr| arr.broadcast_to(common_shape.clone()))
+            .collect()
     }
 
     /// Take elements from array along an axis at specified indices.
@@ -1872,5 +1936,84 @@ mod tests {
         let indices = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
         let result = a.take_along_axis(&indices, 0);
         assert_eq!(result.to_vec(), vec![40.0, 20.0, 60.0]);
+    }
+
+    #[test]
+    fn test_broadcast_arrays_compatible() {
+        // Test broadcasting arrays with compatible shapes
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let c = Array::from_vec(vec![100.0], Shape::new(vec![1]));
+
+        let broadcasted = Array::broadcast_arrays(&[a, b, c]);
+
+        assert_eq!(broadcasted.len(), 3);
+        assert_eq!(broadcasted[0].shape().as_slice(), &[3]);
+        assert_eq!(broadcasted[1].shape().as_slice(), &[3]);
+        assert_eq!(broadcasted[2].shape().as_slice(), &[3]);
+
+        // Verify values
+        assert_eq!(broadcasted[0].to_vec(), vec![1.0, 2.0, 3.0]);
+        assert_eq!(broadcasted[1].to_vec(), vec![10.0, 20.0, 30.0]);
+        assert_eq!(broadcasted[2].to_vec(), vec![100.0, 100.0, 100.0]);
+    }
+
+    #[test]
+    fn test_broadcast_arrays_2d() {
+        // Test broadcasting with 2D arrays
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![1, 3]));
+        let b = Array::from_vec(vec![10.0, 20.0], Shape::new(vec![2, 1]));
+
+        let broadcasted = Array::broadcast_arrays(&[a, b]);
+
+        assert_eq!(broadcasted.len(), 2);
+        assert_eq!(broadcasted[0].shape().as_slice(), &[2, 3]);
+        assert_eq!(broadcasted[1].shape().as_slice(), &[2, 3]);
+
+        // Verify broadcasting worked correctly
+        assert_eq!(
+            broadcasted[0].to_vec(),
+            vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]
+        );
+        assert_eq!(
+            broadcasted[1].to_vec(),
+            vec![10.0, 10.0, 10.0, 20.0, 20.0, 20.0]
+        );
+    }
+
+    #[test]
+    fn test_broadcast_arrays_empty() {
+        // Test with empty array list
+        let broadcasted = Array::broadcast_arrays(&[]);
+        assert_eq!(broadcasted.len(), 0);
+    }
+
+    #[test]
+    fn test_broadcast_arrays_single() {
+        // Test with single array
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let broadcasted = Array::broadcast_arrays(&[a.clone()]);
+
+        assert_eq!(broadcasted.len(), 1);
+        assert_eq!(broadcasted[0].shape().as_slice(), &[3]);
+        assert_eq!(broadcasted[0].to_vec(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot broadcast arrays with shapes")]
+    fn test_broadcast_arrays_incompatible() {
+        // Test incompatible shapes - should panic with improved error message
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let b = Array::from_vec(vec![10.0, 20.0], Shape::new(vec![2]));
+
+        Array::broadcast_arrays(&[a, b]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot broadcast array of shape")]
+    fn test_broadcast_to_error_message() {
+        // Test improved error message in broadcast_to
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        a.broadcast_to(Shape::new(vec![2]));
     }
 }
