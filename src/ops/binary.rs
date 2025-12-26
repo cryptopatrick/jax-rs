@@ -719,6 +719,91 @@ impl Array {
             if b == 0.0 { 0.0 } else { a / b }
         })
     }
+
+    /// Compute element-wise true division.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, 7.0, 9.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![2.0, 2.0, 2.0], Shape::new(vec![3]));
+    /// let c = a.true_divide(&b);
+    /// assert_eq!(c.to_vec(), vec![2.5, 3.5, 4.5]);
+    /// ```
+    pub fn true_divide(&self, other: &Array) -> Array {
+        self.div(other)
+    }
+
+    /// Compute element-wise remainder, with the same sign as divisor.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![7.0, -7.0, 7.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![3.0, 3.0, -3.0], Shape::new(vec![3]));
+    /// let c = a.remainder(&b);
+    /// // Python-style modulo: result has same sign as divisor
+    /// ```
+    pub fn remainder(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Div, |a, b| {
+            let r = a % b;
+            if (r > 0.0 && b < 0.0) || (r < 0.0 && b > 0.0) {
+                r + b
+            } else {
+                r
+            }
+        })
+    }
+
+    /// Compute element-wise difference raised to a power.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 5.0, 7.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.diff_pow(&b, 2.0);  // (a - b)^2
+    /// assert_eq!(c.to_vec(), vec![4.0, 9.0, 16.0]);
+    /// ```
+    pub fn diff_pow(&self, other: &Array, power: f32) -> Array {
+        binary_op(self, other, Primitive::Sub, move |a, b| (a - b).powf(power))
+    }
+
+    /// Compute element-wise squared difference.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 5.0, 7.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let c = a.squared_diff(&b);  // (a - b)^2
+    /// assert_eq!(c.to_vec(), vec![4.0, 9.0, 16.0]);
+    /// ```
+    pub fn squared_diff(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Sub, |a, b| {
+            let d = a - b;
+            d * d
+        })
+    }
+
+    /// Compute element-wise average of two arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![2.0, 4.0, 6.0], Shape::new(vec![3]));
+    /// let b = Array::from_vec(vec![4.0, 6.0, 8.0], Shape::new(vec![3]));
+    /// let c = a.average_with(&b);
+    /// assert_eq!(c.to_vec(), vec![3.0, 5.0, 7.0]);
+    /// ```
+    pub fn average_with(&self, other: &Array) -> Array {
+        binary_op(self, other, Primitive::Add, |a, b| (a + b) / 2.0)
+    }
 }
 
 #[cfg(test)]

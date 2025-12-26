@@ -2744,6 +2744,117 @@ impl Array {
         Array::from_vec(data, self.shape().clone())
     }
 
+    /// Return the index of the maximum element along an axis and the max value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], Shape::new(vec![5]));
+    /// let (idx, val) = a.argmax_with_value();
+    /// assert_eq!(idx, 4);
+    /// assert!((val - 5.0).abs() < 1e-6);
+    /// ```
+    pub fn argmax_with_value(&self) -> (usize, f32) {
+        let data = self.to_vec();
+        let mut max_idx = 0;
+        let mut max_val = f32::NEG_INFINITY;
+
+        for (i, &x) in data.iter().enumerate() {
+            if x > max_val {
+                max_val = x;
+                max_idx = i;
+            }
+        }
+
+        (max_idx, max_val)
+    }
+
+    /// Return the index of the minimum element along an axis and the min value.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![3.0, 1.0, 4.0, 1.0, 5.0], Shape::new(vec![5]));
+    /// let (idx, val) = a.argmin_with_value();
+    /// assert_eq!(idx, 1);
+    /// assert!((val - 1.0).abs() < 1e-6);
+    /// ```
+    pub fn argmin_with_value(&self) -> (usize, f32) {
+        let data = self.to_vec();
+        let mut min_idx = 0;
+        let mut min_val = f32::INFINITY;
+
+        for (i, &x) in data.iter().enumerate() {
+            if x < min_val {
+                min_val = x;
+                min_idx = i;
+            }
+        }
+
+        (min_idx, min_val)
+    }
+
+    /// Return an array with axes transposed to the given permutation.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(
+    ///     vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+    ///     Shape::new(vec![2, 3])
+    /// );
+    /// let b = a.permute(&[1, 0]);
+    /// assert_eq!(b.shape().as_slice(), &[3, 2]);
+    /// ```
+    pub fn permute(&self, axes: &[usize]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(axes.len(), shape.len(), "axes must match number of dimensions");
+
+        // Build new shape
+        let new_shape: Vec<usize> = axes.iter().map(|&a| shape[a]).collect();
+
+        // For 2D transpose
+        if shape.len() == 2 && axes == &[1, 0] {
+            return self.transpose();
+        }
+
+        // General case - use strides calculation
+        let data = self.to_vec();
+        let mut result = vec![0.0; data.len()];
+
+        // Calculate old strides
+        let mut old_strides = vec![1usize; shape.len()];
+        for i in (0..shape.len() - 1).rev() {
+            old_strides[i] = old_strides[i + 1] * shape[i + 1];
+        }
+
+        // Calculate new strides
+        let mut new_strides = vec![1usize; new_shape.len()];
+        for i in (0..new_shape.len() - 1).rev() {
+            new_strides[i] = new_strides[i + 1] * new_shape[i + 1];
+        }
+
+        // Permute strides
+        let permuted_old_strides: Vec<usize> = axes.iter().map(|&a| old_strides[a]).collect();
+
+        // Copy data with permutation
+        for new_idx in 0..data.len() {
+            let mut old_idx = 0;
+            let mut remainder = new_idx;
+            for (d, &new_stride) in new_strides.iter().enumerate() {
+                let coord = remainder / new_stride;
+                remainder %= new_stride;
+                old_idx += coord * permuted_old_strides[d];
+            }
+            result[new_idx] = data[old_idx];
+        }
+
+        Array::from_vec(result, Shape::new(new_shape))
+    }
 }
 
 #[cfg(test)]

@@ -1038,6 +1038,357 @@ impl Array {
             (max_eigval / min_eigval).sqrt()
         }
     }
+
+    /// Compute singular value decomposition (SVD).
+    ///
+    /// Returns (U, S, Vt) where A = U @ diag(S) @ Vt.
+    /// Uses power iteration to find singular values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let (u, s, vt) = a.svd();
+    /// assert_eq!(s.shape().as_slice(), &[2]);
+    /// ```
+    pub fn svd(&self) -> (Array, Array, Array) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "svd requires 2D array");
+
+        let m = shape[0];
+        let n = shape[1];
+        let k = m.min(n);
+
+        // Compute A^T A for right singular vectors
+        let at = self.transpose();
+        let ata = at.matmul(self);
+
+        // Power iteration to get eigenvectors of A^T A (right singular vectors V)
+        let mut v_data: Vec<Vec<f32>> = Vec::with_capacity(k);
+        let mut s_values: Vec<f32> = Vec::with_capacity(k);
+        let mut ata_data = ata.to_vec();
+
+        for _ in 0..k {
+            // Initialize random vector
+            let mut v: Vec<f32> = (0..n).map(|i| ((i as f32 + 1.0) * 0.1).sin()).collect();
+            let mut norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            for x in v.iter_mut() { *x /= norm; }
+
+            // Power iteration
+            for _ in 0..50 {
+                // Multiply by A^T A matrix
+                let mut av = vec![0.0; n];
+                for i in 0..n {
+                    for j in 0..n {
+                        av[i] += ata_data[i * n + j] * v[j];
+                    }
+                }
+
+                // Orthogonalize against previous vectors
+                for prev in &v_data {
+                    let dot: f32 = av.iter().zip(prev.iter()).map(|(a, b)| a * b).sum();
+                    for (a, p) in av.iter_mut().zip(prev.iter()) {
+                        *a -= dot * p;
+                    }
+                }
+
+                norm = av.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm < 1e-10 { break; }
+                for (v_i, av_i) in v.iter_mut().zip(av.iter()) {
+                    *v_i = av_i / norm;
+                }
+            }
+
+            // Singular value is sqrt of eigenvalue
+            let eigenvalue = norm;
+            s_values.push(eigenvalue.sqrt());
+            v_data.push(v);
+        }
+
+        // Compute U = A @ V @ S^-1
+        let mut u_data = vec![0.0; m * k];
+        let a_data = self.to_vec();
+        for col in 0..k {
+            if s_values[col] > 1e-10 {
+                for row in 0..m {
+                    let mut sum = 0.0;
+                    for j in 0..n {
+                        sum += a_data[row * n + j] * v_data[col][j];
+                    }
+                    u_data[row * k + col] = sum / s_values[col];
+                }
+            }
+        }
+
+        // Build output arrays
+        let u = Array::from_vec(u_data, Shape::new(vec![m, k]));
+        let s = Array::from_vec(s_values, Shape::new(vec![k]));
+        let mut vt_data = vec![0.0; k * n];
+        for i in 0..k {
+            for j in 0..n {
+                vt_data[i * n + j] = v_data[i][j];
+            }
+        }
+        let vt = Array::from_vec(vt_data, Shape::new(vec![k, n]));
+
+        (u, s, vt)
+    }
+
+    /// Solve least squares problem: minimize ||Ax - b||^2.
+    ///
+    /// Returns the solution x that minimizes the squared error.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 1.0, 1.0, 2.0, 1.0, 3.0], Shape::new(vec![3, 2]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let x = a.lstsq(&b);
+    /// assert_eq!(x.shape().as_slice(), &[2]);
+    /// ```
+    pub fn lstsq(&self, b: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "lstsq requires 2D matrix A");
+
+        // Use normal equations: x = (A^T A)^-1 A^T b
+        let at = self.transpose();
+        let ata = at.matmul(self);
+        let atb = at.matmul(b);
+        ata.solve(&atb)
+    }
+
+    /// Compute eigenvalues and eigenvectors of a symmetric matrix.
+    ///
+    /// Returns (eigenvalues, eigenvectors) where each column of eigenvectors
+    /// is an eigenvector corresponding to the eigenvalue at the same index.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![2.0, 1.0, 1.0, 2.0], Shape::new(vec![2, 2]));
+    /// let (vals, vecs) = a.eigh();
+    /// assert_eq!(vals.shape().as_slice(), &[2]);
+    /// assert_eq!(vecs.shape().as_slice(), &[2, 2]);
+    /// ```
+    pub fn eigh(&self) -> (Array, Array) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "eigh requires 2D array");
+        assert_eq!(shape[0], shape[1], "eigh requires square matrix");
+
+        let n = shape[0];
+        let mut a_data = self.to_vec();
+        let mut eigenvectors = vec![0.0; n * n];
+
+        // Initialize eigenvectors as identity
+        for i in 0..n {
+            eigenvectors[i * n + i] = 1.0;
+        }
+
+        // Jacobi eigenvalue algorithm
+        for _ in 0..100 {
+            // Find largest off-diagonal element
+            let mut max_val = 0.0_f32;
+            let mut p = 0;
+            let mut q = 1;
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if a_data[i * n + j].abs() > max_val {
+                        max_val = a_data[i * n + j].abs();
+                        p = i;
+                        q = j;
+                    }
+                }
+            }
+
+            if max_val < 1e-10 { break; }
+
+            // Compute rotation angle
+            let diff = a_data[q * n + q] - a_data[p * n + p];
+            let t = if diff.abs() < 1e-10 {
+                1.0
+            } else {
+                let phi = diff / (2.0 * a_data[p * n + q]);
+                1.0 / (phi.abs() + (phi * phi + 1.0).sqrt()) * phi.signum()
+            };
+            let c = 1.0 / (1.0 + t * t).sqrt();
+            let s = t * c;
+
+            // Apply rotation to A
+            let app = a_data[p * n + p];
+            let aqq = a_data[q * n + q];
+            let apq = a_data[p * n + q];
+
+            a_data[p * n + p] = c * c * app - 2.0 * s * c * apq + s * s * aqq;
+            a_data[q * n + q] = s * s * app + 2.0 * s * c * apq + c * c * aqq;
+            a_data[p * n + q] = 0.0;
+            a_data[q * n + p] = 0.0;
+
+            for i in 0..n {
+                if i != p && i != q {
+                    let aip = a_data[i * n + p];
+                    let aiq = a_data[i * n + q];
+                    a_data[i * n + p] = c * aip - s * aiq;
+                    a_data[p * n + i] = a_data[i * n + p];
+                    a_data[i * n + q] = s * aip + c * aiq;
+                    a_data[q * n + i] = a_data[i * n + q];
+                }
+            }
+
+            // Update eigenvectors
+            for i in 0..n {
+                let vip = eigenvectors[i * n + p];
+                let viq = eigenvectors[i * n + q];
+                eigenvectors[i * n + p] = c * vip - s * viq;
+                eigenvectors[i * n + q] = s * vip + c * viq;
+            }
+        }
+
+        // Extract eigenvalues from diagonal
+        let eigenvalues: Vec<f32> = (0..n).map(|i| a_data[i * n + i]).collect();
+
+        (
+            Array::from_vec(eigenvalues, Shape::new(vec![n])),
+            Array::from_vec(eigenvectors, Shape::new(vec![n, n])),
+        )
+    }
+
+    /// Compute eigenvalues of a general (non-symmetric) matrix.
+    ///
+    /// Uses QR iteration to find eigenvalues.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 0.0, 3.0], Shape::new(vec![2, 2]));
+    /// let eigvals = a.eig();
+    /// assert_eq!(eigvals.shape().as_slice(), &[2]);
+    /// ```
+    pub fn eig(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "eig requires 2D array");
+        assert_eq!(shape[0], shape[1], "eig requires square matrix");
+
+        let n = shape[0];
+        let mut a = self.clone();
+
+        // QR iteration
+        for _ in 0..100 {
+            let (q, r) = a.qr();
+            a = r.matmul(&q);
+        }
+
+        // Extract eigenvalues from diagonal
+        let a_data = a.to_vec();
+        let eigenvalues: Vec<f32> = (0..n).map(|i| a_data[i * n + i]).collect();
+
+        Array::from_vec(eigenvalues, Shape::new(vec![n]))
+    }
+
+    /// Compute the tensor dot product along specified axes.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let c = a.tensordot(&b, 1);
+    /// assert_eq!(c.shape().as_slice(), &[2, 2]);
+    /// ```
+    pub fn tensordot(&self, other: &Array, axes: usize) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = other.shape().as_slice();
+
+        // Contract last `axes` dimensions of self with first `axes` of other
+        assert!(axes <= a_shape.len() && axes <= b_shape.len());
+
+        // Reshape to 2D and use matmul
+        let a_outer: usize = a_shape[..a_shape.len() - axes].iter().product();
+        let a_inner: usize = a_shape[a_shape.len() - axes..].iter().product();
+        let b_inner: usize = b_shape[..axes].iter().product();
+        let b_outer: usize = b_shape[axes..].iter().product();
+
+        assert_eq!(a_inner, b_inner, "Contracted dimensions must match");
+
+        let a_2d = self.reshape(Shape::new(vec![a_outer, a_inner]));
+        let b_2d = other.reshape(Shape::new(vec![b_inner, b_outer]));
+
+        let result = a_2d.matmul(&b_2d);
+
+        // Build output shape
+        let mut out_shape = a_shape[..a_shape.len() - axes].to_vec();
+        out_shape.extend_from_slice(&b_shape[axes..]);
+        if out_shape.is_empty() {
+            out_shape.push(1);
+        }
+
+        result.reshape(Shape::new(out_shape))
+    }
+
+    /// Compute the Kronecker product of two arrays.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let b = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let c = a.kron(&b);
+    /// assert_eq!(c.shape().as_slice(), &[4, 4]);
+    /// ```
+    pub fn kron(&self, other: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(other.dtype(), DType::Float32, "Only Float32 supported");
+
+        let a_shape = self.shape().as_slice();
+        let b_shape = other.shape().as_slice();
+
+        // For 2D arrays
+        if a_shape.len() == 2 && b_shape.len() == 2 {
+            let (m, n) = (a_shape[0], a_shape[1]);
+            let (p, q) = (b_shape[0], b_shape[1]);
+            let a_data = self.to_vec();
+            let b_data = other.to_vec();
+
+            let mut result = vec![0.0; m * p * n * q];
+            for i in 0..m {
+                for j in 0..n {
+                    for k in 0..p {
+                        for l in 0..q {
+                            let out_row = i * p + k;
+                            let out_col = j * q + l;
+                            result[out_row * (n * q) + out_col] =
+                                a_data[i * n + j] * b_data[k * q + l];
+                        }
+                    }
+                }
+            }
+
+            Array::from_vec(result, Shape::new(vec![m * p, n * q]))
+        } else {
+            // 1D case
+            let a_data = self.to_vec();
+            let b_data = other.to_vec();
+            let mut result = Vec::with_capacity(a_data.len() * b_data.len());
+            for &a in &a_data {
+                for &b in &b_data {
+                    result.push(a * b);
+                }
+            }
+            Array::from_vec(result, Shape::new(vec![a_data.len() * b_data.len()]))
+        }
+    }
 }
 
 /// Helper function for n-dimensional transpose.

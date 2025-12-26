@@ -728,6 +728,174 @@ impl Array {
         // Already contiguous, just clone
         self.clone()
     }
+
+    /// Create a Hamming window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::hamming(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn hamming(n: usize) -> Array {
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                0.54 - 0.46 * (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos()
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a Hanning window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::hanning(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn hanning(n: usize) -> Array {
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                0.5 * (1.0 - (2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32).cos())
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a Blackman window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::blackman(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn blackman(n: usize) -> Array {
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                let x = i as f32 / (n - 1) as f32;
+                0.42 - 0.5 * (2.0 * std::f32::consts::PI * x).cos()
+                    + 0.08 * (4.0 * std::f32::consts::PI * x).cos()
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a Kaiser window of given length and beta parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::kaiser(5, 5.0);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn kaiser(n: usize, beta: f32) -> Array {
+        // Approximate Bessel I0 function
+        fn i0(x: f32) -> f32 {
+            let ax = x.abs();
+            if ax < 3.75 {
+                let y = (x / 3.75).powi(2);
+                1.0 + y * (3.5156229 + y * (3.0899424 + y * (1.2067492
+                    + y * (0.2659732 + y * (0.0360768 + y * 0.0045813)))))
+            } else {
+                let y = 3.75 / ax;
+                (ax.exp() / ax.sqrt()) * (0.39894228 + y * (0.01328592
+                    + y * (0.00225319 + y * (-0.00157565 + y * (0.00916281
+                    + y * (-0.02057706 + y * (0.02635537 + y * (-0.01647633
+                    + y * 0.00392377))))))))
+            }
+        }
+
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                let x = 2.0 * i as f32 / (n - 1) as f32 - 1.0;
+                i0(beta * (1.0 - x * x).sqrt()) / i0(beta)
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a Bartlett (triangular) window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::bartlett(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn bartlett(n: usize) -> Array {
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                let x = i as f32;
+                let half = (n - 1) as f32 / 2.0;
+                1.0 - ((x - half) / half).abs()
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a flat top window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::flattop(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// ```
+    pub fn flattop(n: usize) -> Array {
+        let a0 = 0.21557895;
+        let a1 = 0.41663158;
+        let a2 = 0.277263158;
+        let a3 = 0.083578947;
+        let a4 = 0.006947368;
+
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                let x = 2.0 * std::f32::consts::PI * i as f32 / (n - 1) as f32;
+                a0 - a1 * x.cos() + a2 * (2.0 * x).cos()
+                   - a3 * (3.0 * x).cos() + a4 * (4.0 * x).cos()
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
+
+    /// Create a triangular window of given length.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::Array;
+    /// let w = Array::triang(5);
+    /// assert_eq!(w.shape().as_slice(), &[5]);
+    /// assert!((w.to_vec()[2] - 1.0).abs() < 1e-6); // Peak at center
+    /// ```
+    pub fn triang(n: usize) -> Array {
+        let data: Vec<f32> = (0..n)
+            .map(|i| {
+                let half = (n as f32 + 1.0) / 2.0;
+                if i as f32 + 1.0 <= half {
+                    2.0 * (i as f32 + 1.0) / (n as f32 + 1.0)
+                } else {
+                    2.0 - 2.0 * (i as f32 + 1.0) / (n as f32 + 1.0)
+                }
+            })
+            .collect();
+        let buffer = Buffer::from_f32(data, crate::default_device());
+        Array::from_buffer(buffer, Shape::new(vec![n]))
+    }
 }
 
 #[cfg(test)]
