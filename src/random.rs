@@ -350,6 +350,392 @@ pub fn choice(mut key: PRNGKey, x: &Array, n: usize, replace: bool) -> Array {
     Array::from_vec(result, Shape::new(vec![n]))
 }
 
+/// Shuffle an array in-place (functionally, returns a new shuffled array).
+///
+/// This is an alias for `permutation` for API compatibility with NumPy.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, shuffle}, Array, Shape};
+/// let key = PRNGKey::from_seed(42);
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+/// let shuffled = shuffle(key, &x);
+/// ```
+pub fn shuffle(key: PRNGKey, x: &Array) -> Array {
+    permutation(key, x)
+}
+
+/// Generate random samples from an exponential distribution.
+///
+/// The exponential distribution has PDF: f(x) = λ * exp(-λ * x) for x >= 0.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, exponential}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = exponential(key, 1.0, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn exponential(
+    mut key: PRNGKey,
+    rate: f32,
+    shape: Shape,
+    dtype: DType,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(rate > 0.0, "Rate must be positive");
+
+    let size = shape.size();
+    let mut data = Vec::with_capacity(size);
+
+    for _ in 0..size {
+        let u = key.next_f32().max(1e-10); // Avoid log(0)
+        data.push(-u.ln() / rate);
+    }
+
+    Array::from_vec(data, shape)
+}
+
+/// Generate random samples from a gamma distribution.
+///
+/// Uses the Marsaglia and Tsang method.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, gamma}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = gamma(key, 2.0, 1.0, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn gamma(
+    mut key: PRNGKey,
+    alpha: f32,
+    beta: f32,
+    shape: Shape,
+    dtype: DType,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(alpha > 0.0, "Alpha must be positive");
+    assert!(beta > 0.0, "Beta must be positive");
+
+    let size = shape.size();
+    let mut data = Vec::with_capacity(size);
+
+    // Marsaglia and Tsang method for alpha >= 1
+    let d = if alpha >= 1.0 { alpha - 1.0 / 3.0 } else { alpha + 2.0 / 3.0 };
+    let c = 1.0 / (9.0 * d).sqrt();
+
+    for _ in 0..size {
+        let mut x: f32;
+        let mut v: f32;
+
+        loop {
+            // Generate standard normal
+            let u1 = key.next_f32().max(1e-10);
+            let u2 = key.next_f32();
+            let r = (-2.0 * u1.ln()).sqrt();
+            let theta = 2.0 * std::f32::consts::PI * u2;
+            x = r * theta.cos();
+
+            v = 1.0 + c * x;
+            if v > 0.0 {
+                v = v * v * v;
+                let u = key.next_f32();
+                if u < 1.0 - 0.0331 * x * x * x * x {
+                    break;
+                }
+                if u.ln() < 0.5 * x * x + d * (1.0 - v + v.ln()) {
+                    break;
+                }
+            }
+        }
+
+        let mut result = d * v;
+
+        // Adjustment for alpha < 1
+        if alpha < 1.0 {
+            let u = key.next_f32().max(1e-10);
+            result *= u.powf(1.0 / alpha);
+        }
+
+        data.push(result / beta);
+    }
+
+    Array::from_vec(data, shape)
+}
+
+/// Generate random samples from a beta distribution.
+///
+/// Uses the relationship: X ~ Beta(a, b) where X = G1 / (G1 + G2)
+/// with G1 ~ Gamma(a, 1) and G2 ~ Gamma(b, 1).
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, beta}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = beta(key, 2.0, 5.0, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn beta(
+    key: PRNGKey,
+    alpha: f32,
+    beta_param: f32,
+    shape: Shape,
+    dtype: DType,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(alpha > 0.0, "Alpha must be positive");
+    assert!(beta_param > 0.0, "Beta must be positive");
+
+    let (key1, key2) = key.split();
+    let g1 = gamma(key1, alpha, 1.0, shape.clone(), dtype);
+    let g2 = gamma(key2, beta_param, 1.0, shape.clone(), dtype);
+
+    let g1_data = g1.to_vec();
+    let g2_data = g2.to_vec();
+
+    let data: Vec<f32> = g1_data
+        .iter()
+        .zip(g2_data.iter())
+        .map(|(&x, &y)| x / (x + y))
+        .collect();
+
+    Array::from_vec(data, shape)
+}
+
+/// Generate random samples from a categorical distribution.
+///
+/// Samples indices based on probability weights.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, categorical}, Array, Shape};
+/// let key = PRNGKey::from_seed(42);
+/// let logits = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let samples = categorical(key, &logits, 10);
+/// ```
+pub fn categorical(mut key: PRNGKey, logits: &Array, num_samples: usize) -> Array {
+    assert_eq!(logits.ndim(), 1, "Logits must be 1-D");
+
+    let logits_data = logits.to_vec();
+    let n_categories = logits_data.len();
+
+    // Convert logits to probabilities via softmax
+    let max_logit = logits_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let exp_logits: Vec<f32> = logits_data.iter().map(|&x| (x - max_logit).exp()).collect();
+    let sum_exp: f32 = exp_logits.iter().sum();
+    let probs: Vec<f32> = exp_logits.iter().map(|&x| x / sum_exp).collect();
+
+    // Compute cumulative probabilities
+    let mut cumprobs = Vec::with_capacity(n_categories);
+    let mut cumsum = 0.0;
+    for p in &probs {
+        cumsum += p;
+        cumprobs.push(cumsum);
+    }
+
+    // Sample
+    let mut samples = Vec::with_capacity(num_samples);
+    for _ in 0..num_samples {
+        let u = key.next_f32();
+        let mut idx = 0;
+        for (i, &cp) in cumprobs.iter().enumerate() {
+            if u <= cp {
+                idx = i;
+                break;
+            }
+            idx = i;
+        }
+        samples.push(idx as f32);
+    }
+
+    Array::from_vec(samples, Shape::new(vec![num_samples]))
+}
+
+/// Generate random samples from a Poisson distribution.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, poisson}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = poisson(key, 5.0, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn poisson(mut key: PRNGKey, lam: f32, shape: Shape, dtype: DType) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(lam > 0.0, "Lambda must be positive");
+
+    let size = shape.size();
+    let mut data = Vec::with_capacity(size);
+
+    // For small lambda, use direct method
+    let l = (-lam).exp();
+
+    for _ in 0..size {
+        let mut k = 0;
+        let mut p = 1.0f32;
+
+        loop {
+            p *= key.next_f32();
+            if p <= l {
+                break;
+            }
+            k += 1;
+        }
+
+        data.push(k as f32);
+    }
+
+    Array::from_vec(data, shape)
+}
+
+/// Generate random samples from a truncated normal distribution.
+///
+/// Samples from a normal distribution truncated to [lower, upper].
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, truncated_normal}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = truncated_normal(key, -1.0, 1.0, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn truncated_normal(
+    mut key: PRNGKey,
+    lower: f32,
+    upper: f32,
+    shape: Shape,
+    dtype: DType,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(lower < upper, "Lower must be less than upper");
+
+    let size = shape.size();
+    let mut data = Vec::with_capacity(size);
+
+    // Use rejection sampling
+    for _ in 0..size {
+        loop {
+            let u1 = key.next_f32().max(1e-10);
+            let u2 = key.next_f32();
+            let r = (-2.0 * u1.ln()).sqrt();
+            let theta = 2.0 * std::f32::consts::PI * u2;
+            let z = r * theta.cos();
+
+            if z >= lower && z <= upper {
+                data.push(z);
+                break;
+            }
+        }
+    }
+
+    Array::from_vec(data, shape)
+}
+
+/// Generate multivariate normal samples.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// # use jax_rs::{random::{PRNGKey, multivariate_normal}, Array, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let mean = Array::from_vec(vec![0.0, 0.0], Shape::new(vec![2]));
+/// let cov = Array::from_vec(vec![1.0, 0.5, 0.5, 1.0], Shape::new(vec![2, 2]));
+/// let samples = multivariate_normal(key, &mean, &cov, 100, DType::Float32);
+/// ```
+pub fn multivariate_normal(
+    key: PRNGKey,
+    mean: &Array,
+    cov: &Array,
+    num_samples: usize,
+    dtype: DType,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert_eq!(mean.ndim(), 1, "Mean must be 1-D");
+    assert_eq!(cov.ndim(), 2, "Covariance must be 2-D");
+
+    let n = mean.size();
+    let cov_shape = cov.shape().as_slice();
+    assert_eq!(cov_shape[0], n, "Covariance must be n x n");
+    assert_eq!(cov_shape[1], n, "Covariance must be n x n");
+
+    // Compute Cholesky decomposition L where cov = L @ L^T
+    let l = cov.cholesky();
+
+    // Generate standard normal samples [num_samples, n]
+    let z = normal(key, Shape::new(vec![num_samples, n]), dtype);
+
+    // Transform: x = mean + L @ z^T
+    let mean_data = mean.to_vec();
+    let l_data = l.to_vec();
+    let z_data = z.to_vec();
+
+    let mut result_data = Vec::with_capacity(num_samples * n);
+
+    for i in 0..num_samples {
+        for j in 0..n {
+            let mut val = mean_data[j];
+            for k in 0..n {
+                // L is lower triangular, so L[j][k] = 0 for k > j
+                if k <= j {
+                    val += l_data[j * n + k] * z_data[i * n + k];
+                }
+            }
+            result_data.push(val);
+        }
+    }
+
+    Array::from_vec(result_data, Shape::new(vec![num_samples, n]))
+}
+
+/// Generate samples from a discrete distribution.
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, discrete}, Array, Shape};
+/// let key = PRNGKey::from_seed(42);
+/// let probs = Array::from_vec(vec![0.1, 0.3, 0.6], Shape::new(vec![3]));
+/// let samples = discrete(key, &probs, 10);
+/// ```
+pub fn discrete(mut key: PRNGKey, probs: &Array, num_samples: usize) -> Array {
+    assert_eq!(probs.ndim(), 1, "Probabilities must be 1-D");
+
+    let probs_data = probs.to_vec();
+    let n_categories = probs_data.len();
+
+    // Normalize probabilities
+    let sum: f32 = probs_data.iter().sum();
+    let normalized: Vec<f32> = probs_data.iter().map(|&p| p / sum).collect();
+
+    // Compute cumulative probabilities
+    let mut cumprobs = Vec::with_capacity(n_categories);
+    let mut cumsum = 0.0;
+    for p in &normalized {
+        cumsum += p;
+        cumprobs.push(cumsum);
+    }
+
+    // Sample
+    let mut samples = Vec::with_capacity(num_samples);
+    for _ in 0..num_samples {
+        let u = key.next_f32();
+        let mut idx = 0;
+        for (i, &cp) in cumprobs.iter().enumerate() {
+            if u <= cp {
+                idx = i;
+                break;
+            }
+            idx = i;
+        }
+        samples.push(idx as f32);
+    }
+
+    Array::from_vec(samples, Shape::new(vec![num_samples]))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

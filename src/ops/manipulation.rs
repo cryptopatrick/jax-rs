@@ -2855,6 +2855,315 @@ impl Array {
 
         Array::from_vec(result, Shape::new(new_shape))
     }
+
+    /// Gather values along an axis using indices.
+    ///
+    /// This is a generalized form of indexing that allows selecting arbitrary
+    /// indices along a specified axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let indices = Array::from_vec(vec![0.0, 2.0], Shape::new(vec![2]));
+    /// let result = a.gather(&indices, 1);
+    /// // Gathers columns 0 and 2 from each row
+    /// ```
+    pub fn gather(&self, indices: &Array, axis: usize) -> Array {
+        let shape = self.shape().as_slice();
+        assert!(axis < shape.len(), "Axis out of bounds");
+
+        let indices_data: Vec<usize> = indices.to_vec().iter().map(|&x| x as usize).collect();
+        let data = self.to_vec();
+
+        if axis == 0 && shape.len() == 1 {
+            // Simple 1D case
+            let result: Vec<f32> = indices_data.iter().map(|&i| data[i]).collect();
+            return Array::from_vec(result, Shape::new(vec![indices_data.len()]));
+        }
+
+        // For multi-dimensional arrays
+        let mut result = Vec::new();
+        let mut new_shape = shape.to_vec();
+        new_shape[axis] = indices_data.len();
+
+        // Compute strides
+        let mut strides: Vec<usize> = Vec::with_capacity(shape.len());
+        let mut stride = 1;
+        for &dim in shape.iter().rev() {
+            strides.push(stride);
+            stride *= dim;
+        }
+        strides.reverse();
+
+        let total_size: usize = new_shape.iter().product();
+        result.reserve(total_size);
+
+        // Iterate through all output positions
+        for out_idx in 0..total_size {
+            // Compute output coordinates
+            let mut coords = Vec::with_capacity(shape.len());
+            let mut remainder = out_idx;
+            for &dim in &new_shape {
+                coords.push(remainder % dim);
+                remainder /= dim;
+            }
+            coords.reverse();
+
+            // The coordinate at axis is an index into indices array
+            let idx_in_indices = coords[axis];
+            coords[axis] = indices_data[idx_in_indices];
+
+            // Compute input index
+            let mut in_idx = 0;
+            for (d, &coord) in coords.iter().enumerate() {
+                in_idx += coord * strides[d];
+            }
+
+            result.push(data[in_idx]);
+        }
+
+        Array::from_vec(result, Shape::new(new_shape))
+    }
+
+    /// Gather values using n-dimensional indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let indices = vec![(0, 1), (1, 2)]; // (row, col) pairs
+    /// let result = a.gather_nd(&indices);
+    /// // Returns values at [0,1] and [1,2]
+    /// ```
+    pub fn gather_nd(&self, indices: &[(usize, usize)]) -> Array {
+        let data = self.to_vec();
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "gather_nd only supports 2D arrays for now");
+
+        let cols = shape[1];
+        let result: Vec<f32> = indices
+            .iter()
+            .map(|&(r, c)| data[r * cols + c])
+            .collect();
+
+        Array::from_vec(result, Shape::new(vec![indices.len()]))
+    }
+
+    /// Segment sum - sum elements by segment ID.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let data = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let segment_ids = Array::from_vec(vec![0.0, 0.0, 1.0, 1.0, 2.0], Shape::new(vec![5]));
+    /// let result = data.segment_sum(&segment_ids, 3);
+    /// // segment 0: 1+2=3, segment 1: 3+4=7, segment 2: 5
+    /// ```
+    pub fn segment_sum(&self, segment_ids: &Array, num_segments: usize) -> Array {
+        assert_eq!(self.size(), segment_ids.size(), "Data and segment_ids must have same size");
+
+        let data = self.to_vec();
+        let ids: Vec<usize> = segment_ids.to_vec().iter().map(|&x| x as usize).collect();
+
+        let mut result = vec![0.0; num_segments];
+        for (val, &seg_id) in data.iter().zip(ids.iter()) {
+            if seg_id < num_segments {
+                result[seg_id] += val;
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![num_segments]))
+    }
+
+    /// Segment mean - compute mean of elements by segment ID.
+    pub fn segment_mean(&self, segment_ids: &Array, num_segments: usize) -> Array {
+        assert_eq!(self.size(), segment_ids.size(), "Data and segment_ids must have same size");
+
+        let data = self.to_vec();
+        let ids: Vec<usize> = segment_ids.to_vec().iter().map(|&x| x as usize).collect();
+
+        let mut sums = vec![0.0; num_segments];
+        let mut counts = vec![0usize; num_segments];
+
+        for (val, &seg_id) in data.iter().zip(ids.iter()) {
+            if seg_id < num_segments {
+                sums[seg_id] += val;
+                counts[seg_id] += 1;
+            }
+        }
+
+        let result: Vec<f32> = sums
+            .iter()
+            .zip(counts.iter())
+            .map(|(&sum, &count)| if count > 0 { sum / count as f32 } else { 0.0 })
+            .collect();
+
+        Array::from_vec(result, Shape::new(vec![num_segments]))
+    }
+
+    /// Segment max - compute max of elements by segment ID.
+    pub fn segment_max(&self, segment_ids: &Array, num_segments: usize) -> Array {
+        assert_eq!(self.size(), segment_ids.size(), "Data and segment_ids must have same size");
+
+        let data = self.to_vec();
+        let ids: Vec<usize> = segment_ids.to_vec().iter().map(|&x| x as usize).collect();
+
+        let mut result = vec![f32::NEG_INFINITY; num_segments];
+
+        for (val, &seg_id) in data.iter().zip(ids.iter()) {
+            if seg_id < num_segments && *val > result[seg_id] {
+                result[seg_id] = *val;
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![num_segments]))
+    }
+
+    /// Segment min - compute min of elements by segment ID.
+    pub fn segment_min(&self, segment_ids: &Array, num_segments: usize) -> Array {
+        assert_eq!(self.size(), segment_ids.size(), "Data and segment_ids must have same size");
+
+        let data = self.to_vec();
+        let ids: Vec<usize> = segment_ids.to_vec().iter().map(|&x| x as usize).collect();
+
+        let mut result = vec![f32::INFINITY; num_segments];
+
+        for (val, &seg_id) in data.iter().zip(ids.iter()) {
+            if seg_id < num_segments && *val < result[seg_id] {
+                result[seg_id] = *val;
+            }
+        }
+
+        Array::from_vec(result, Shape::new(vec![num_segments]))
+    }
+
+    /// Flip array along multiple axes.
+    pub fn flip_axes(&self, axes: &[usize]) -> Array {
+        let mut result = self.clone();
+        for &axis in axes {
+            result = result.flip(axis);
+        }
+        result
+    }
+
+    /// Move multiple axes to new positions.
+    pub fn moveaxis_multiple(&self, sources: &[usize], destinations: &[usize]) -> Array {
+        assert_eq!(sources.len(), destinations.len(), "sources and destinations must have same length");
+
+        let mut result = self.clone();
+        for (&src, &dst) in sources.iter().zip(destinations.iter()) {
+            result = result.moveaxis(src, dst);
+        }
+        result
+    }
+
+    /// Expand dimensions at multiple positions.
+    pub fn expand_dims_multiple(&self, axes: &[usize]) -> Array {
+        let mut sorted_axes = axes.to_vec();
+        sorted_axes.sort();
+
+        let mut result = self.clone();
+        for (i, &axis) in sorted_axes.iter().enumerate() {
+            result = result.expand_dims(axis + i);
+        }
+        result
+    }
+
+    /// Squeeze all axes with size 1.
+    pub fn squeeze_all(&self) -> Array {
+        let shape = self.shape().as_slice();
+        let new_shape: Vec<usize> = shape.iter().cloned().filter(|&d| d != 1).collect();
+
+        if new_shape.is_empty() {
+            // Result is scalar
+            return Array::from_vec(self.to_vec(), Shape::new(vec![1]));
+        }
+
+        self.reshape(Shape::new(new_shape))
+    }
+
+    /// Unflatten array - reshape the first axis into multiple dimensions.
+    pub fn unflatten(&self, dim: usize, sizes: &[usize]) -> Array {
+        let shape = self.shape().as_slice();
+        assert!(dim < shape.len(), "dim out of bounds");
+        assert_eq!(
+            sizes.iter().product::<usize>(),
+            shape[dim],
+            "sizes must multiply to the dimension size"
+        );
+
+        let mut new_shape = Vec::with_capacity(shape.len() - 1 + sizes.len());
+        new_shape.extend(&shape[..dim]);
+        new_shape.extend(sizes);
+        new_shape.extend(&shape[dim + 1..]);
+
+        self.reshape(Shape::new(new_shape))
+    }
+
+    /// Repeat array elements along each axis.
+    pub fn repeat_axis(&self, repeats: usize, axis: usize) -> Array {
+        let shape = self.shape().as_slice();
+        assert!(axis < shape.len(), "axis out of bounds");
+
+        if axis == 0 {
+            // Repeat along first axis
+            let data = self.to_vec();
+            let chunk_size = self.size() / shape[0];
+            let mut result = Vec::with_capacity(self.size() * repeats);
+
+            for chunk in data.chunks(chunk_size) {
+                for _ in 0..repeats {
+                    result.extend(chunk);
+                }
+            }
+
+            let mut new_shape = shape.to_vec();
+            new_shape[axis] *= repeats;
+
+            Array::from_vec(result, Shape::new(new_shape))
+        } else {
+            // For other axes, transpose, repeat, transpose back
+            // Simplified implementation
+            let mut new_shape = shape.to_vec();
+            new_shape[axis] *= repeats;
+
+            let data = self.to_vec();
+            let mut result = Vec::with_capacity(new_shape.iter().product());
+
+            // Compute strides
+            let inner_size: usize = shape[axis + 1..].iter().product();
+            let outer_size: usize = shape[..axis].iter().product();
+            let axis_size = shape[axis];
+
+            for outer in 0..outer_size {
+                for ax in 0..axis_size {
+                    for _ in 0..repeats {
+                        let start = outer * axis_size * inner_size + ax * inner_size;
+                        result.extend(&data[start..start + inner_size]);
+                    }
+                }
+            }
+
+            Array::from_vec(result, Shape::new(new_shape))
+        }
+    }
+
+    /// N-dimensional tile - repeat array along each axis.
+    pub fn tile_nd(&self, reps: &[usize]) -> Array {
+        assert_eq!(reps.len(), self.ndim(), "reps must have same length as ndim");
+
+        let mut result = self.clone();
+        for (axis, &rep) in reps.iter().enumerate() {
+            if rep > 1 {
+                result = result.repeat_axis(rep, axis);
+            }
+        }
+        result
+    }
 }
 
 #[cfg(test)]

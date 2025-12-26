@@ -2,6 +2,7 @@
 
 pub mod binary;
 pub mod comparison;
+pub mod control;
 pub mod creation;
 pub mod einsum;
 pub mod fft;
