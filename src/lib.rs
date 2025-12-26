@@ -34,6 +34,7 @@ mod device;
 mod dtype;
 pub mod nn;
 mod ops;
+pub mod optim;
 pub mod random;
 pub mod scipy;
 mod shape;
