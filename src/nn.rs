@@ -1559,4 +1559,119 @@ mod tests {
         // Sum of all elements: 1+2+3+4 = 10
         assert_eq!(result.to_vec(), vec![10.0]);
     }
+
+    #[test]
+    fn test_batch_norm() {
+        // Test batch normalization with 2 samples, 3 features
+        // Each feature should be normalized independently across the batch
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, // Sample 1
+                4.0, 5.0, 6.0, // Sample 2
+            ],
+            Shape::new(vec![2, 3]),
+        );
+
+        let result = batch_norm(&x, 1e-5);
+        assert_eq!(result.shape().as_slice(), &[2, 3]);
+
+        let data = result.to_vec();
+
+        // Each feature column should have mean ~0 and std ~1
+        // For feature 0: values are [1.0, 4.0], mean=2.5, std~1.5
+        // Normalized: [(1-2.5)/1.5, (4-2.5)/1.5] = [-1, 1]
+        // For feature 1: values are [2.0, 5.0], mean=3.5, std~1.5
+        // For feature 2: values are [3.0, 6.0], mean=4.5, std~1.5
+
+        // Check that values are normalized (approximately -1 and 1 for each feature)
+        assert!((data[0] + 1.0).abs() < 0.01); // Feature 0, sample 1
+        assert!((data[3] - 1.0).abs() < 0.01); // Feature 0, sample 2
+    }
+
+    #[test]
+    fn test_batch_norm_zero_variance() {
+        // Test batch norm with constant values (zero variance)
+        let x = Array::from_vec(
+            vec![
+                5.0, 3.0, 7.0, // Sample 1
+                5.0, 3.0, 7.0, // Sample 2
+            ],
+            Shape::new(vec![2, 3]),
+        );
+
+        let result = batch_norm(&x, 1e-5);
+        let data = result.to_vec();
+
+        // With zero variance, all values should be 0 after normalization
+        for &val in &data {
+            assert!(val.abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn test_max_pool2d_basic() {
+        // Test 2x2 max pooling on 4x4 input
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+            ],
+            Shape::new(vec![4, 4]),
+        );
+
+        let result = max_pool2d(&x, (2, 2), None);
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+
+        // Max of each 2x2 region:
+        // Top-left: max(1,2,5,6) = 6
+        // Top-right: max(3,4,7,8) = 8
+        // Bottom-left: max(9,10,13,14) = 14
+        // Bottom-right: max(11,12,15,16) = 16
+        assert_eq!(result.to_vec(), vec![6.0, 8.0, 14.0, 16.0]);
+    }
+
+    #[test]
+    fn test_max_pool2d_with_stride() {
+        // Test max pooling with custom stride
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0, 5.0,
+                6.0, 7.0, 8.0, 9.0, 10.0,
+            ],
+            Shape::new(vec![2, 5]),
+        );
+
+        // Kernel 2x2, stride (1, 2) - overlapping in height, non-overlapping in width
+        let result = max_pool2d(&x, (2, 2), Some((1, 2)));
+        assert_eq!(result.shape().as_slice(), &[1, 2]);
+
+        // First window: max(1,2,6,7) = 7
+        // Second window: max(3,4,8,9) = 9
+        assert_eq!(result.to_vec(), vec![7.0, 9.0]);
+    }
+
+    #[test]
+    fn test_max_pool2d_batched() {
+        // Test max pooling with batch dimension [batch, height, width]
+        let x = Array::from_vec(
+            vec![
+                // Batch 1
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                // Batch 2
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+            ],
+            Shape::new(vec![2, 2, 4]),
+        );
+
+        let result = max_pool2d(&x, (2, 2), None);
+        assert_eq!(result.shape().as_slice(), &[2, 1, 2]);
+
+        // Batch 1: max(1,2,5,6)=6, max(3,4,7,8)=8
+        // Batch 2: max(9,10,13,14)=14, max(11,12,15,16)=16
+        assert_eq!(result.to_vec(), vec![6.0, 8.0, 14.0, 16.0]);
+    }
 }
