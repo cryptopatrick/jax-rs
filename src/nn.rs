@@ -315,6 +315,86 @@ pub fn cross_entropy_loss(predictions: &Array, targets: &Array) -> f32 {
     sum / pred_data.len() as f32
 }
 
+/// Binary cross-entropy loss.
+///
+/// Computes binary cross-entropy loss for binary classification tasks.
+/// Formula: -mean(targets * log(predictions + epsilon) + (1 - targets) * log(1 - predictions + epsilon))
+///
+/// # Arguments
+///
+/// * `predictions` - Predicted probabilities (should be in [0, 1])
+/// * `targets` - Target labels (should be 0 or 1)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let predictions = Array::from_vec(vec![0.9, 0.1, 0.8], Shape::new(vec![3]));
+/// let targets = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+/// let loss = nn::binary_cross_entropy(&predictions, &targets);
+/// ```
+pub fn binary_cross_entropy(predictions: &Array, targets: &Array) -> f32 {
+    assert_eq!(
+        predictions.shape(),
+        targets.shape(),
+        "Predictions and targets must have same shape"
+    );
+
+    let pred_data = predictions.to_vec();
+    let target_data = targets.to_vec();
+    let epsilon = 1e-7;
+
+    let sum: f32 = pred_data
+        .iter()
+        .zip(target_data.iter())
+        .map(|(&p, &t)| {
+            -t * (p + epsilon).ln() - (1.0 - t) * (1.0 - p + epsilon).ln()
+        })
+        .sum();
+
+    sum / pred_data.len() as f32
+}
+
+/// Hinge loss for SVM.
+///
+/// Computes hinge loss for support vector machine classification.
+/// Formula: mean(max(0, 1 - targets * predictions))
+///
+/// # Arguments
+///
+/// * `predictions` - Predicted values (can be any real number)
+/// * `targets` - Target labels (should be -1 or 1)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let predictions = Array::from_vec(vec![0.5, -0.3, 1.2], Shape::new(vec![3]));
+/// let targets = Array::from_vec(vec![1.0, -1.0, 1.0], Shape::new(vec![3]));
+/// let loss = nn::hinge_loss(&predictions, &targets);
+/// ```
+pub fn hinge_loss(predictions: &Array, targets: &Array) -> f32 {
+    assert_eq!(
+        predictions.shape(),
+        targets.shape(),
+        "Predictions and targets must have same shape"
+    );
+
+    let pred_data = predictions.to_vec();
+    let target_data = targets.to_vec();
+
+    let sum: f32 = pred_data
+        .iter()
+        .zip(target_data.iter())
+        .map(|(&p, &t)| {
+            let margin = 1.0 - t * p;
+            margin.max(0.0)
+        })
+        .sum();
+
+    sum / pred_data.len() as f32
+}
+
 /// Batch normalization.
 ///
 /// Normalizes inputs across the batch dimension.
@@ -1420,6 +1500,89 @@ mod tests {
             Array::from_vec(vec![1.0, 1.0, 1.0], Shape::new(vec![3]));
         let loss2 = mse_loss(&pred2, &target2);
         assert!((loss2 - 1.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_cross_entropy_loss() {
+        // Test cross-entropy with perfect prediction
+        let pred = Array::from_vec(vec![0.9, 0.05, 0.05], Shape::new(vec![3]));
+        let target = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+        let loss = cross_entropy_loss(&pred, &target);
+
+        // Loss should be low for good prediction
+        assert!(loss < 0.5);
+
+        // Test with uniform prediction (higher loss)
+        let pred2 = Array::from_vec(vec![0.33, 0.33, 0.34], Shape::new(vec![3]));
+        let target2 = Array::from_vec(vec![1.0, 0.0, 0.0], Shape::new(vec![3]));
+        let loss2 = cross_entropy_loss(&pred2, &target2);
+
+        // Uniform prediction should have higher loss
+        assert!(loss2 > loss);
+    }
+
+    #[test]
+    fn test_binary_cross_entropy() {
+        // Test binary cross-entropy with perfect predictions
+        let pred = Array::from_vec(vec![0.9, 0.1, 0.8], Shape::new(vec![3]));
+        let target = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+        let loss = binary_cross_entropy(&pred, &target);
+
+        // Loss should be low for good predictions
+        assert!(loss < 0.3);
+
+        // Test with poor predictions (high loss)
+        let pred2 = Array::from_vec(vec![0.1, 0.9, 0.2], Shape::new(vec![3]));
+        let target2 = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+        let loss2 = binary_cross_entropy(&pred2, &target2);
+
+        // Poor predictions should have higher loss
+        assert!(loss2 > loss);
+    }
+
+    #[test]
+    fn test_binary_cross_entropy_extreme() {
+        // Test with extreme values (close to 0 and 1)
+        let pred = Array::from_vec(vec![0.99, 0.01], Shape::new(vec![2]));
+        let target = Array::from_vec(vec![1.0, 0.0], Shape::new(vec![2]));
+        let loss = binary_cross_entropy(&pred, &target);
+
+        // Loss should be very low
+        assert!(loss < 0.02);
+    }
+
+    #[test]
+    fn test_hinge_loss() {
+        // Test hinge loss with correct classifications (margin > 1)
+        let pred = Array::from_vec(vec![2.0, -2.0, 1.5], Shape::new(vec![3]));
+        let target = Array::from_vec(vec![1.0, -1.0, 1.0], Shape::new(vec![3]));
+        let loss = hinge_loss(&pred, &target);
+
+        // All predictions are correct with good margin, loss should be 0
+        assert!(loss.abs() < 1e-5);
+
+        // Test with some misclassifications
+        let pred2 = Array::from_vec(vec![0.5, 0.5, -0.5], Shape::new(vec![3]));
+        let target2 = Array::from_vec(vec![1.0, -1.0, 1.0], Shape::new(vec![3]));
+        let loss2 = hinge_loss(&pred2, &target2);
+
+        // Should have positive loss
+        // pred2[0]: margin = 1 - 1*0.5 = 0.5 -> max(0, 0.5) = 0.5
+        // pred2[1]: margin = 1 - (-1)*0.5 = 1.5 -> max(0, 1.5) = 1.5
+        // pred2[2]: margin = 1 - 1*(-0.5) = 1.5 -> max(0, 1.5) = 1.5
+        // Average: (0.5 + 1.5 + 1.5) / 3 = 3.5/3 ≈ 1.167
+        assert!((loss2 - 1.167).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_hinge_loss_perfect() {
+        // Test with perfect classification (large margin)
+        let pred = Array::from_vec(vec![5.0, -5.0], Shape::new(vec![2]));
+        let target = Array::from_vec(vec![1.0, -1.0], Shape::new(vec![2]));
+        let loss = hinge_loss(&pred, &target);
+
+        // Loss should be 0 for perfect predictions with large margin
+        assert!(loss.abs() < 1e-5);
     }
 
     #[test]
