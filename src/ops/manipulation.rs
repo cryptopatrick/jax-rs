@@ -196,6 +196,74 @@ impl Array {
         Array::from_vec(result_data, result_shape)
     }
 
+    /// Select values from multiple choice arrays based on index array.
+    ///
+    /// For each element in `indices`, selects the corresponding element from
+    /// the choice array at that index. Similar to a multi-way switch statement.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Array of integer indices (as f32) specifying which choice to pick
+    /// * `choices` - Slice of arrays to choose from
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let indices = Array::from_vec(vec![0.0, 1.0, 2.0, 1.0], Shape::new(vec![4]));
+    /// let choice0 = Array::from_vec(vec![10.0, 10.0, 10.0, 10.0], Shape::new(vec![4]));
+    /// let choice1 = Array::from_vec(vec![20.0, 20.0, 20.0, 20.0], Shape::new(vec![4]));
+    /// let choice2 = Array::from_vec(vec![30.0, 30.0, 30.0, 30.0], Shape::new(vec![4]));
+    /// let result = Array::select(&indices, &[choice0, choice1, choice2]);
+    /// assert_eq!(result.to_vec(), vec![10.0, 20.0, 30.0, 20.0]);
+    /// ```
+    pub fn select(indices: &Array, choices: &[Array]) -> Array {
+        assert_eq!(indices.dtype(), DType::Float32, "Only Float32 supported");
+        assert!(!choices.is_empty(), "Must provide at least one choice");
+
+        // All choices must have the same shape
+        let choice_shape = choices[0].shape();
+        for choice in choices.iter().skip(1) {
+            assert_eq!(
+                choice.dtype(),
+                DType::Float32,
+                "Only Float32 supported for choices"
+            );
+            assert_eq!(
+                choice.shape(),
+                choice_shape,
+                "All choices must have the same shape"
+            );
+        }
+
+        // Indices and choices must have compatible shapes
+        assert_eq!(
+            indices.shape(),
+            choice_shape,
+            "Indices and choices must have the same shape"
+        );
+
+        let indices_data = indices.to_vec();
+        let choice_data: Vec<Vec<f32>> = choices.iter().map(|c| c.to_vec()).collect();
+
+        let result_data: Vec<f32> = indices_data
+            .iter()
+            .enumerate()
+            .map(|(i, &idx)| {
+                let idx_int = idx as usize;
+                assert!(
+                    idx_int < choices.len(),
+                    "Index {} out of bounds for {} choices",
+                    idx_int,
+                    choices.len()
+                );
+                choice_data[idx_int][i]
+            })
+            .collect();
+
+        Array::from_vec(result_data, choice_shape.clone())
+    }
+
     /// Clip (limit) values in an array.
     ///
     /// # Examples
@@ -1078,6 +1146,42 @@ impl Array {
         Array::from_vec(data, self.shape().clone())
     }
 
+    /// Scatter updates to specified indices using multiplication.
+    ///
+    /// For each index, multiplies the existing value with the update value.
+    /// When multiple updates target the same index, they are accumulated.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Indices where updates should be applied
+    /// * `updates` - Values to multiply at the corresponding indices
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let result = a.scatter_mul(&[1, 2, 3], &[2.0, 3.0, 0.5]);
+    /// assert_eq!(result.to_vec(), vec![1.0, 4.0, 9.0, 2.0, 5.0]);
+    /// ```
+    pub fn scatter_mul(&self, indices: &[usize], updates: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            updates.len(),
+            "Number of indices must match number of updates"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] *= updates[i];
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
     /// Take values from an array along an axis using indices.
     ///
     /// This is similar to gather operations in other frameworks.
@@ -1813,6 +1917,36 @@ mod tests {
     }
 
     #[test]
+    fn test_select_basic() {
+        let indices = Array::from_vec(vec![0.0, 1.0, 2.0, 1.0], Shape::new(vec![4]));
+        let choice0 = Array::from_vec(vec![10.0, 10.0, 10.0, 10.0], Shape::new(vec![4]));
+        let choice1 = Array::from_vec(vec![20.0, 20.0, 20.0, 20.0], Shape::new(vec![4]));
+        let choice2 = Array::from_vec(vec![30.0, 30.0, 30.0, 30.0], Shape::new(vec![4]));
+        let result = Array::select(&indices, &[choice0, choice1, choice2]);
+        assert_eq!(result.to_vec(), vec![10.0, 20.0, 30.0, 20.0]);
+    }
+
+    #[test]
+    fn test_select_varying_values() {
+        let indices = Array::from_vec(vec![0.0, 1.0, 0.0], Shape::new(vec![3]));
+        let choice0 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let choice1 = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let result = Array::select(&indices, &[choice0, choice1]);
+        // Index 0 selects from choice0: [1.0, _, 3.0]
+        // Index 1 selects from choice1: [_, 20.0, _]
+        assert_eq!(result.to_vec(), vec![1.0, 20.0, 3.0]);
+    }
+
+    #[test]
+    fn test_select_2d() {
+        let indices = Array::from_vec(vec![0.0, 1.0, 1.0, 0.0], Shape::new(vec![2, 2]));
+        let choice0 = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+        let choice1 = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0], Shape::new(vec![2, 2]));
+        let result = Array::select(&indices, &[choice0, choice1]);
+        assert_eq!(result.to_vec(), vec![1.0, 20.0, 30.0, 4.0]);
+    }
+
+    #[test]
     fn test_clip() {
         let a = Array::from_vec(
             vec![-5.0, 0.0, 5.0, 10.0, 15.0],
@@ -2200,6 +2334,18 @@ mod tests {
         let a2 = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
         let result2 = a2.scatter_max(&[0, 1, 2], &[5.0, 10.0, 15.0]);
         assert_eq!(result2.to_vec(), vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn test_scatter_mul() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let result = a.scatter_mul(&[1, 2, 3], &[2.0, 3.0, 0.5]);
+        assert_eq!(result.to_vec(), vec![1.0, 4.0, 9.0, 2.0, 5.0]);
+
+        // Test with duplicate indices (accumulates multiplication)
+        let a2 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let result2 = a2.scatter_mul(&[0, 0, 1], &[2.0, 3.0, 5.0]);
+        assert_eq!(result2.to_vec(), vec![6.0, 10.0, 3.0]); // 1*2*3=6, 2*5=10, 3
     }
 
     #[test]

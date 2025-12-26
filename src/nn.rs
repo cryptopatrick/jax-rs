@@ -395,6 +395,248 @@ pub fn hinge_loss(predictions: &Array, targets: &Array) -> f32 {
     sum / pred_data.len() as f32
 }
 
+/// Focal loss for addressing class imbalance.
+///
+/// Focal loss applies a modulating term to the cross entropy loss to focus
+/// learning on hard examples. Defined as: -alpha * (1 - p_t)^gamma * log(p_t)
+///
+/// # Arguments
+///
+/// * `predictions` - Predicted probabilities (should be after sigmoid/softmax)
+/// * `targets` - Ground truth labels (same shape as predictions)
+/// * `alpha` - Weighting factor (typically 0.25)
+/// * `gamma` - Focusing parameter (typically 2.0)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let predictions = Array::from_vec(vec![0.9, 0.3, 0.8], Shape::new(vec![3]));
+/// let targets = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+/// let loss = nn::focal_loss(&predictions, &targets, 0.25, 2.0);
+/// assert!(loss > 0.0);
+/// ```
+pub fn focal_loss(predictions: &Array, targets: &Array, alpha: f32, gamma: f32) -> f32 {
+    assert_eq!(
+        predictions.shape(),
+        targets.shape(),
+        "Predictions and targets must have same shape"
+    );
+
+    let pred_data = predictions.to_vec();
+    let target_data = targets.to_vec();
+
+    let sum: f32 = pred_data
+        .iter()
+        .zip(target_data.iter())
+        .map(|(&p, &t)| {
+            let p = p.clamp(1e-7, 1.0 - 1e-7); // Avoid log(0)
+            let p_t = if t == 1.0 { p } else { 1.0 - p };
+            let focal_weight = (1.0 - p_t).powf(gamma);
+            -alpha * focal_weight * p_t.ln()
+        })
+        .sum();
+
+    sum / pred_data.len() as f32
+}
+
+/// Smooth L1 loss (Huber loss).
+///
+/// A robust loss function that is less sensitive to outliers than MSE.
+/// Acts like L2 for small errors and L1 for large errors.
+///
+/// # Arguments
+///
+/// * `predictions` - Predicted values
+/// * `targets` - Ground truth values
+/// * `beta` - Threshold for switching between L1 and L2 (typically 1.0)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let predictions = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let targets = Array::from_vec(vec![1.5, 2.5, 10.0], Shape::new(vec![3]));
+/// let loss = nn::smooth_l1_loss(&predictions, &targets, 1.0);
+/// assert!(loss > 0.0);
+/// ```
+pub fn smooth_l1_loss(predictions: &Array, targets: &Array, beta: f32) -> f32 {
+    assert_eq!(
+        predictions.shape(),
+        targets.shape(),
+        "Predictions and targets must have same shape"
+    );
+
+    let pred_data = predictions.to_vec();
+    let target_data = targets.to_vec();
+
+    let sum: f32 = pred_data
+        .iter()
+        .zip(target_data.iter())
+        .map(|(&p, &t)| {
+            let diff = (p - t).abs();
+            if diff < beta {
+                0.5 * diff * diff / beta
+            } else {
+                diff - 0.5 * beta
+            }
+        })
+        .sum();
+
+    sum / pred_data.len() as f32
+}
+
+/// Kullback-Leibler divergence loss.
+///
+/// Measures how one probability distribution diverges from a reference distribution.
+/// KL(P || Q) = sum(P * log(P / Q))
+///
+/// # Arguments
+///
+/// * `predictions` - Predicted probability distribution (log-probabilities)
+/// * `targets` - Target probability distribution
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let predictions = Array::from_vec(vec![0.1, 0.2, 0.7], Shape::new(vec![3]));
+/// let targets = Array::from_vec(vec![0.3, 0.3, 0.4], Shape::new(vec![3]));
+/// let loss = nn::kl_divergence(&predictions, &targets);
+/// assert!(loss >= 0.0);
+/// ```
+pub fn kl_divergence(predictions: &Array, targets: &Array) -> f32 {
+    assert_eq!(
+        predictions.shape(),
+        targets.shape(),
+        "Predictions and targets must have same shape"
+    );
+
+    let pred_data = predictions.to_vec();
+    let target_data = targets.to_vec();
+
+    let sum: f32 = target_data
+        .iter()
+        .zip(pred_data.iter())
+        .map(|(&t, &p)| {
+            if t > 1e-7 {
+                let p = p.clamp(1e-7, 1.0); // Avoid log(0)
+                t * ((t / p).ln())
+            } else {
+                0.0
+            }
+        })
+        .sum();
+
+    sum
+}
+
+/// Triplet loss for metric learning.
+///
+/// Encourages anchor-positive pairs to be closer than anchor-negative pairs by a margin.
+/// Loss = max(0, ||anchor - positive||² - ||anchor - negative||² + margin)
+///
+/// # Arguments
+///
+/// * `anchor` - Anchor embeddings
+/// * `positive` - Positive embeddings (same class as anchor)
+/// * `negative` - Negative embeddings (different class from anchor)
+/// * `margin` - Minimum margin between positive and negative distances
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let anchor = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let positive = Array::from_vec(vec![1.1, 2.1, 3.1], Shape::new(vec![3]));
+/// let negative = Array::from_vec(vec![5.0, 6.0, 7.0], Shape::new(vec![3]));
+/// let loss = nn::triplet_loss(&anchor, &positive, &negative, 1.0);
+/// ```
+pub fn triplet_loss(anchor: &Array, positive: &Array, negative: &Array, margin: f32) -> f32 {
+    assert_eq!(
+        anchor.shape(),
+        positive.shape(),
+        "Anchor and positive must have same shape"
+    );
+    assert_eq!(
+        anchor.shape(),
+        negative.shape(),
+        "Anchor and negative must have same shape"
+    );
+    assert_eq!(anchor.dtype(), DType::Float32, "Only Float32 supported");
+
+    let anchor_data = anchor.to_vec();
+    let positive_data = positive.to_vec();
+    let negative_data = negative.to_vec();
+
+    // Compute squared Euclidean distances
+    let pos_dist: f32 = anchor_data
+        .iter()
+        .zip(positive_data.iter())
+        .map(|(&a, &p)| (a - p).powi(2))
+        .sum();
+
+    let neg_dist: f32 = anchor_data
+        .iter()
+        .zip(negative_data.iter())
+        .map(|(&a, &n)| (a - n).powi(2))
+        .sum();
+
+    // Triplet loss with margin
+    (pos_dist - neg_dist + margin).max(0.0)
+}
+
+/// Contrastive loss for similarity learning.
+///
+/// Pulls similar pairs together and pushes dissimilar pairs apart.
+/// For similar pairs (label=1): loss = distance²
+/// For dissimilar pairs (label=0): loss = max(0, margin - distance)²
+///
+/// # Arguments
+///
+/// * `embedding1` - First embedding vector
+/// * `embedding2` - Second embedding vector
+/// * `label` - 1.0 if pair is similar, 0.0 if dissimilar
+/// * `margin` - Margin for dissimilar pairs
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let emb1 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+/// let emb2 = Array::from_vec(vec![1.1, 2.1, 3.1], Shape::new(vec![3]));
+/// let loss = nn::contrastive_loss(&emb1, &emb2, 1.0, 1.0); // Similar pair
+/// ```
+pub fn contrastive_loss(embedding1: &Array, embedding2: &Array, label: f32, margin: f32) -> f32 {
+    assert_eq!(
+        embedding1.shape(),
+        embedding2.shape(),
+        "Embeddings must have same shape"
+    );
+    assert_eq!(embedding1.dtype(), DType::Float32, "Only Float32 supported");
+    assert!(label == 0.0 || label == 1.0, "Label must be 0.0 or 1.0");
+
+    let emb1_data = embedding1.to_vec();
+    let emb2_data = embedding2.to_vec();
+
+    // Compute Euclidean distance
+    let dist_squared: f32 = emb1_data
+        .iter()
+        .zip(emb2_data.iter())
+        .map(|(&e1, &e2)| (e1 - e2).powi(2))
+        .sum();
+
+    let dist = dist_squared.sqrt();
+
+    if label == 1.0 {
+        // Similar pair: minimize distance
+        dist_squared
+    } else {
+        // Dissimilar pair: maintain margin
+        (margin - dist).max(0.0).powi(2)
+    }
+}
+
 /// Batch normalization.
 ///
 /// Normalizes inputs across the batch dimension.
@@ -1663,6 +1905,151 @@ mod tests {
         let loss = hinge_loss(&pred, &target);
 
         // Loss should be 0 for perfect predictions with large margin
+        assert!(loss.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_focal_loss() {
+        // Test focal loss with typical parameters
+        let predictions = Array::from_vec(vec![0.9, 0.3, 0.8, 0.1], Shape::new(vec![4]));
+        let targets = Array::from_vec(vec![1.0, 0.0, 1.0, 0.0], Shape::new(vec![4]));
+        let loss = focal_loss(&predictions, &targets, 0.25, 2.0);
+
+        // Loss should be positive and less for confident correct predictions
+        assert!(loss > 0.0);
+        assert!(loss < 1.0); // Should be relatively small for mostly correct predictions
+    }
+
+    #[test]
+    fn test_focal_loss_easy_examples() {
+        // Test that focal loss down-weights easy examples
+        let easy_pred = Array::from_vec(vec![0.95, 0.05], Shape::new(vec![2]));
+        let hard_pred = Array::from_vec(vec![0.6, 0.4], Shape::new(vec![2]));
+        let targets = Array::from_vec(vec![1.0, 0.0], Shape::new(vec![2]));
+
+        let easy_loss = focal_loss(&easy_pred, &targets, 0.25, 2.0);
+        let hard_loss = focal_loss(&hard_pred, &targets, 0.25, 2.0);
+
+        // Hard examples should contribute more to loss
+        assert!(hard_loss > easy_loss);
+    }
+
+    #[test]
+    fn test_smooth_l1_loss() {
+        // Test smooth L1 loss
+        let predictions = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let targets = Array::from_vec(vec![1.5, 2.5, 10.0], Shape::new(vec![3]));
+        let loss = smooth_l1_loss(&predictions, &targets, 1.0);
+
+        // Loss should be positive
+        assert!(loss > 0.0);
+        // Loss should be less than MSE for large outliers
+        let mse = mse_loss(&predictions, &targets);
+        assert!(loss < mse);
+    }
+
+    #[test]
+    fn test_smooth_l1_loss_small_errors() {
+        // For small errors, should behave like L2
+        let predictions = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let targets = Array::from_vec(vec![1.1, 2.1, 3.1], Shape::new(vec![3]));
+        let loss = smooth_l1_loss(&predictions, &targets, 1.0);
+
+        // Loss should be small for small errors
+        assert!(loss < 0.1);
+    }
+
+    #[test]
+    fn test_kl_divergence() {
+        // Test KL divergence with similar distributions
+        let predictions = Array::from_vec(vec![0.3, 0.3, 0.4], Shape::new(vec![3]));
+        let targets = Array::from_vec(vec![0.33, 0.33, 0.34], Shape::new(vec![3]));
+        let loss = kl_divergence(&predictions, &targets);
+
+        // KL divergence should be non-negative
+        assert!(loss >= 0.0);
+        // Should be small for similar distributions
+        assert!(loss < 0.1);
+    }
+
+    #[test]
+    fn test_kl_divergence_identical() {
+        // Test KL divergence with identical distributions
+        let predictions = Array::from_vec(vec![0.25, 0.25, 0.25, 0.25], Shape::new(vec![4]));
+        let targets = predictions.clone();
+        let loss = kl_divergence(&predictions, &targets);
+
+        // KL divergence should be 0 for identical distributions
+        assert!(loss.abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_triplet_loss() {
+        // Test triplet loss with anchor, positive, and negative
+        let anchor = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let positive = Array::from_vec(vec![1.1, 2.1, 3.1], Shape::new(vec![3]));
+        let negative = Array::from_vec(vec![5.0, 6.0, 7.0], Shape::new(vec![3]));
+        let loss = triplet_loss(&anchor, &positive, &negative, 1.0);
+
+        // Loss should be non-negative
+        assert!(loss >= 0.0);
+
+        // Positive distance: (1.0-1.1)² + (2.0-2.1)² + (3.0-3.1)² = 0.01 + 0.01 + 0.01 = 0.03
+        // Negative distance: (1.0-5.0)² + (2.0-6.0)² + (3.0-7.0)² = 16 + 16 + 16 = 48
+        // Loss = max(0, 0.03 - 48 + 1.0) = max(0, -46.97) = 0
+        assert!(loss < 0.1); // Should be close to 0 since negative is much farther
+    }
+
+    #[test]
+    fn test_triplet_loss_violation() {
+        // Test triplet loss when margin is violated
+        let anchor = Array::from_vec(vec![1.0, 2.0], Shape::new(vec![2]));
+        let positive = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+        let negative = Array::from_vec(vec![3.5, 4.5], Shape::new(vec![2]));
+        let margin = 5.0;
+        let loss = triplet_loss(&anchor, &positive, &negative, margin);
+
+        // Positive distance: (1-3)² + (2-4)² = 4 + 4 = 8
+        // Negative distance: (1-3.5)² + (2-4.5)² = 6.25 + 6.25 = 12.5
+        // Loss = max(0, 8 - 12.5 + 5) = max(0, 0.5) = 0.5
+        assert!((loss - 0.5).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_contrastive_loss_similar() {
+        // Test contrastive loss for similar pair
+        let emb1 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let emb2 = Array::from_vec(vec![1.1, 2.1, 3.1], Shape::new(vec![3]));
+        let loss = contrastive_loss(&emb1, &emb2, 1.0, 1.0);
+
+        // Distance²: (1.0-1.1)² + (2.0-2.1)² + (3.0-3.1)² = 0.01 + 0.01 + 0.01 = 0.03
+        // Loss = distance² = 0.03
+        assert!((loss - 0.03).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_contrastive_loss_dissimilar() {
+        // Test contrastive loss for dissimilar pair
+        let emb1 = Array::from_vec(vec![0.0, 0.0], Shape::new(vec![2]));
+        let emb2 = Array::from_vec(vec![3.0, 4.0], Shape::new(vec![2]));
+        let margin = 10.0;
+        let loss = contrastive_loss(&emb1, &emb2, 0.0, margin);
+
+        // Distance = sqrt(3² + 4²) = sqrt(25) = 5.0
+        // Loss = (margin - distance)² = (10 - 5)² = 25
+        assert!((loss - 25.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_contrastive_loss_dissimilar_satisfied() {
+        // Test contrastive loss when dissimilar pair exceeds margin
+        let emb1 = Array::from_vec(vec![0.0, 0.0], Shape::new(vec![2]));
+        let emb2 = Array::from_vec(vec![10.0, 0.0], Shape::new(vec![2]));
+        let margin = 5.0;
+        let loss = contrastive_loss(&emb1, &emb2, 0.0, margin);
+
+        // Distance = 10.0, margin = 5.0
+        // Loss = max(0, margin - distance)² = max(0, -5)² = 0
         assert!(loss.abs() < 1e-5);
     }
 
