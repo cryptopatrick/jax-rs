@@ -3,6 +3,7 @@
 pub mod binary;
 pub mod comparison;
 pub mod creation;
+pub mod fft;
 pub mod linalg;
 pub mod manipulation;
 pub mod reduce;
