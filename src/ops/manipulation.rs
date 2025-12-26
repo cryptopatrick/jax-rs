@@ -2619,6 +2619,131 @@ impl Array {
 
         Array::from_vec(result, Shape::new(vec![max_len]))
     }
+
+    /// Evaluate a piecewise-defined function.
+    ///
+    /// Applies different functions based on conditions. For each element,
+    /// the first true condition determines which function to apply.
+    ///
+    /// # Arguments
+    ///
+    /// * `conditions` - Vector of condition arrays (booleans as 0.0/1.0)
+    /// * `functions` - Vector of function output arrays corresponding to conditions
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let x = Array::from_vec(vec![-2.0, -1.0, 0.0, 1.0, 2.0], Shape::new(vec![5]));
+    /// // Condition: x < 0
+    /// let cond1 = Array::from_vec(vec![1.0, 1.0, 0.0, 0.0, 0.0], Shape::new(vec![5]));
+    /// // Condition: x >= 0
+    /// let cond2 = Array::from_vec(vec![0.0, 0.0, 1.0, 1.0, 1.0], Shape::new(vec![5]));
+    /// // Function outputs (pre-computed)
+    /// let func1 = Array::from_vec(vec![-2.0, -1.0, 0.0, 1.0, 2.0], Shape::new(vec![5])); // identity
+    /// let func2 = Array::from_vec(vec![4.0, 1.0, 0.0, 1.0, 4.0], Shape::new(vec![5])); // x^2
+    /// let result = x.piecewise(&[cond1, cond2], &[func1, func2]);
+    /// // For x<0: use identity, for x>=0: use x^2
+    /// assert_eq!(result.to_vec(), vec![-2.0, -1.0, 0.0, 1.0, 4.0]);
+    /// ```
+    pub fn piecewise(&self, conditions: &[Array], functions: &[Array]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(conditions.len(), functions.len(), "Number of conditions must match number of functions");
+        assert!(!conditions.is_empty(), "At least one condition required");
+
+        let n = self.size();
+        for cond in conditions {
+            assert_eq!(cond.size(), n, "Condition size must match array size");
+        }
+        for func in functions {
+            assert_eq!(func.size(), n, "Function output size must match array size");
+        }
+
+        let mut result = vec![0.0; n];
+        let mut assigned = vec![false; n];
+
+        for (cond, func) in conditions.iter().zip(functions.iter()) {
+            let cond_data = cond.to_vec();
+            let func_data = func.to_vec();
+
+            for i in 0..n {
+                if !assigned[i] && cond_data[i] != 0.0 {
+                    result[i] = func_data[i];
+                    assigned[i] = true;
+                }
+            }
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Place values into array at specified indices.
+    ///
+    /// Returns a new array with values inserted at the specified indices.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![0.0, 0.0, 0.0, 0.0, 0.0], Shape::new(vec![5]));
+    /// let mask = Array::from_vec(vec![0.0, 1.0, 0.0, 1.0, 0.0], Shape::new(vec![5]));
+    /// let values = vec![10.0, 20.0];
+    /// let result = a.place(&mask, &values);
+    /// assert_eq!(result.to_vec(), vec![0.0, 10.0, 0.0, 20.0, 0.0]);
+    /// ```
+    pub fn place(&self, mask: &Array, values: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(mask.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.size(), mask.size(), "Array and mask must have same size");
+
+        let mut data = self.to_vec();
+        let mask_data = mask.to_vec();
+
+        let mut value_idx = 0;
+        for (i, &m) in mask_data.iter().enumerate() {
+            if m != 0.0 && value_idx < values.len() {
+                data[i] = values[value_idx];
+                value_idx += 1;
+            }
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Copy values from source to destination array.
+    ///
+    /// Returns a new array with values from source copied to corresponding positions.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let dst = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let src = Array::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], Shape::new(vec![5]));
+    /// let mask = Array::from_vec(vec![0.0, 1.0, 1.0, 0.0, 1.0], Shape::new(vec![5]));
+    /// let result = dst.copyto(&src, &mask);
+    /// assert_eq!(result.to_vec(), vec![1.0, 20.0, 30.0, 4.0, 50.0]);
+    /// ```
+    pub fn copyto(&self, src: &Array, mask: &Array) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(src.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(mask.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(self.size(), src.size(), "Arrays must have same size");
+        assert_eq!(self.size(), mask.size(), "Array and mask must have same size");
+
+        let mut data = self.to_vec();
+        let src_data = src.to_vec();
+        let mask_data = mask.to_vec();
+
+        for i in 0..data.len() {
+            if mask_data[i] != 0.0 {
+                data[i] = src_data[i];
+            }
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
 }
 
 #[cfg(test)]

@@ -839,6 +839,84 @@ impl Array {
 
         (frac, int)
     }
+
+    /// Compute x * 2^exp for each element.
+    /// Equivalent to ldexp function from C math library.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.ldexp(2);
+    /// assert_eq!(b.to_vec(), vec![4.0, 8.0, 12.0]); // multiply by 2^2 = 4
+    /// ```
+    pub fn ldexp(&self, exp: i32) -> Array {
+        let multiplier = 2_f32.powi(exp);
+        unary_op(self, Primitive::Mul, move |x| x * multiplier)
+    }
+
+    /// Decompose x into mantissa and exponent: x = m * 2^e.
+    /// Returns (mantissa, exponent) where mantissa is in [0.5, 1.0).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![4.0, 8.0, 0.5], Shape::new(vec![3]));
+    /// let (mantissa, exp) = a.frexp();
+    /// // 4.0 = 0.5 * 2^3, 8.0 = 0.5 * 2^4, 0.5 = 0.5 * 2^0
+    /// ```
+    pub fn frexp(&self) -> (Array, Array) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+
+        let data = self.to_vec();
+        let mut mantissa_data = Vec::with_capacity(data.len());
+        let mut exp_data = Vec::with_capacity(data.len());
+
+        for &x in &data {
+            if x == 0.0 {
+                mantissa_data.push(0.0);
+                exp_data.push(0.0);
+            } else {
+                let bits = x.to_bits();
+                let sign = (bits >> 31) & 1;
+                let exponent = ((bits >> 23) & 0xFF) as i32 - 126;
+                // Create mantissa in [0.5, 1.0)
+                let mantissa_bits = (sign << 31) | (126 << 23) | (bits & 0x7FFFFF);
+                let mantissa = f32::from_bits(mantissa_bits);
+                mantissa_data.push(mantissa);
+                exp_data.push(exponent as f32);
+            }
+        }
+
+        let mantissa = Array::from_vec(mantissa_data, self.shape().clone());
+        let exp = Array::from_vec(exp_data, self.shape().clone());
+
+        (mantissa, exp)
+    }
+
+    /// Divide arrays element-wise with safe handling of division by zero.
+    /// Returns 0 when dividing by zero instead of NaN/Inf.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let b = a.safe_divide_scalar(2.0);
+    /// assert_eq!(b.to_vec(), vec![0.5, 1.0, 1.5]);
+    /// let c = a.safe_divide_scalar(0.0);
+    /// assert_eq!(c.to_vec(), vec![0.0, 0.0, 0.0]); // Returns 0 instead of Inf
+    /// ```
+    pub fn safe_divide_scalar(&self, divisor: f32) -> Array {
+        if divisor == 0.0 {
+            Array::zeros(self.shape().clone(), DType::Float32)
+        } else {
+            unary_op(self, Primitive::Reciprocal, move |x| x / divisor)
+        }
+    }
+
 }
 
 #[cfg(test)]

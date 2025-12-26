@@ -1254,6 +1254,179 @@ impl Array {
 
         input_idx
     }
+
+    /// Product of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 4.0], Shape::new(vec![4]));
+    /// let prod = a.nanprod();
+    /// assert_eq!(prod, 12.0); // 1 * 3 * 4
+    /// ```
+    pub fn nanprod(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        data.iter()
+            .filter(|x| !x.is_nan())
+            .fold(1.0, |acc, &x| acc * x)
+    }
+
+    /// Cumulative sum of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 4.0], Shape::new(vec![4]));
+    /// let cumsum = a.nancumsum();
+    /// // Treats NaN as 0
+    /// assert_eq!(cumsum.to_vec(), vec![1.0, 1.0, 4.0, 8.0]);
+    /// ```
+    pub fn nancumsum(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut sum = 0.0;
+
+        for &val in data.iter() {
+            if !val.is_nan() {
+                sum += val;
+            }
+            result.push(sum);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Cumulative product of array elements, ignoring NaN values.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, f32::NAN, 3.0, 4.0], Shape::new(vec![4]));
+    /// let cumprod = a.nancumprod();
+    /// // Treats NaN as 1
+    /// assert_eq!(cumprod.to_vec(), vec![1.0, 1.0, 3.0, 12.0]);
+    /// ```
+    pub fn nancumprod(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        let mut result = Vec::with_capacity(data.len());
+        let mut prod = 1.0;
+
+        for &val in data.iter() {
+            if !val.is_nan() {
+                prod *= val;
+            }
+            result.push(prod);
+        }
+
+        Array::from_vec(result, self.shape().clone())
+    }
+
+    /// Compute the arithmetic-geometric mean.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![4]));
+    /// let agm = a.agmean();
+    /// // AGM is between arithmetic and geometric means
+    /// ```
+    pub fn agmean(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        if data.is_empty() {
+            return f32::NAN;
+        }
+
+        let arith = data.iter().sum::<f32>() / data.len() as f32;
+        let geom = data.iter().fold(1.0, |acc, &x| acc * x).powf(1.0 / data.len() as f32);
+
+        // AGM iteration
+        let mut a = arith;
+        let mut g = geom;
+
+        for _ in 0..20 {
+            let new_a = (a + g) / 2.0;
+            let new_g = (a * g).sqrt();
+            if (new_a - a).abs() < 1e-10 {
+                break;
+            }
+            a = new_a;
+            g = new_g;
+        }
+
+        a
+    }
+
+    /// Root mean square of array elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+    /// let rms = a.rms();
+    /// // sqrt((1 + 4 + 9) / 3) = sqrt(14/3)
+    /// assert!((rms - (14.0_f32 / 3.0).sqrt()).abs() < 1e-6);
+    /// ```
+    pub fn rms(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        if data.is_empty() {
+            return 0.0;
+        }
+
+        let sum_sq: f32 = data.iter().map(|&x| x * x).sum();
+        (sum_sq / data.len() as f32).sqrt()
+    }
+
+    /// Harmonic mean of array elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 4.0], Shape::new(vec![3]));
+    /// let hm = a.harmonic_mean();
+    /// // 3 / (1/1 + 1/2 + 1/4) = 3 / 1.75
+    /// ```
+    pub fn harmonic_mean(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        if data.is_empty() {
+            return f32::NAN;
+        }
+
+        let sum_inv: f32 = data.iter().map(|&x| 1.0 / x).sum();
+        data.len() as f32 / sum_inv
+    }
+
+    /// Geometric mean of array elements.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 4.0, 8.0], Shape::new(vec![4]));
+    /// let gm = a.geometric_mean();
+    /// // (1 * 2 * 4 * 8)^(1/4) = 64^(1/4) = 2.83...
+    /// ```
+    pub fn geometric_mean(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let data = self.to_vec();
+        if data.is_empty() {
+            return f32::NAN;
+        }
+
+        let product: f32 = data.iter().fold(1.0, |acc, &x| acc * x);
+        product.powf(1.0 / data.len() as f32)
+    }
 }
 
 #[cfg(test)]

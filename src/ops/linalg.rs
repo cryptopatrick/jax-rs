@@ -757,6 +757,287 @@ impl Array {
 
         Array::from_vec(result, Shape::new(vec![m, n]))
     }
+
+    /// QR decomposition of a matrix.
+    ///
+    /// Decomposes matrix A into Q (orthogonal) and R (upper triangular) such that A = QR.
+    /// Uses the Gram-Schmidt process.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+    /// let (q, r) = a.qr();
+    /// // Q is orthogonal, R is upper triangular
+    /// // Q * R ≈ A
+    /// ```
+    pub fn qr(&self) -> (Array, Array) {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "QR decomposition requires 2D array");
+
+        let (m, n) = (shape[0], shape[1]);
+        let data = self.to_vec();
+
+        // Initialize Q and R
+        let mut q = vec![0.0; m * n];
+        let mut r = vec![0.0; n * n];
+
+        // Modified Gram-Schmidt
+        for j in 0..n {
+            // Copy column j of A into v
+            let mut v: Vec<f32> = (0..m).map(|i| data[i * n + j]).collect();
+
+            // Orthogonalize against previous columns
+            for i in 0..j {
+                // r[i,j] = q[:,i] . v
+                let mut dot = 0.0;
+                for k in 0..m {
+                    dot += q[k * n + i] * v[k];
+                }
+                r[i * n + j] = dot;
+
+                // v = v - r[i,j] * q[:,i]
+                for k in 0..m {
+                    v[k] -= dot * q[k * n + i];
+                }
+            }
+
+            // r[j,j] = ||v||
+            let norm: f32 = v.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            r[j * n + j] = norm;
+
+            // q[:,j] = v / norm
+            if norm > 1e-10 {
+                for k in 0..m {
+                    q[k * n + j] = v[k] / norm;
+                }
+            }
+        }
+
+        let q_arr = Array::from_vec(q, Shape::new(vec![m, n]));
+        let r_arr = Array::from_vec(r, Shape::new(vec![n, n]));
+
+        (q_arr, r_arr)
+    }
+
+    /// Cholesky decomposition of a symmetric positive-definite matrix.
+    ///
+    /// Decomposes matrix A into L such that A = L * L^T, where L is lower triangular.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the matrix is not square or not positive-definite.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// // Symmetric positive-definite matrix
+    /// let a = Array::from_vec(vec![4.0, 2.0, 2.0, 3.0], Shape::new(vec![2, 2]));
+    /// let l = a.cholesky();
+    /// // L * L^T = A
+    /// ```
+    pub fn cholesky(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "Cholesky decomposition requires 2D array");
+        assert_eq!(shape[0], shape[1], "Cholesky decomposition requires square matrix");
+
+        let n = shape[0];
+        let data = self.to_vec();
+        let mut l = vec![0.0; n * n];
+
+        for i in 0..n {
+            for j in 0..=i {
+                let mut sum = 0.0;
+
+                if j == i {
+                    // Diagonal element
+                    for k in 0..j {
+                        sum += l[j * n + k] * l[j * n + k];
+                    }
+                    let val = data[j * n + j] - sum;
+                    assert!(val > 0.0, "Matrix is not positive-definite");
+                    l[j * n + j] = val.sqrt();
+                } else {
+                    // Off-diagonal element
+                    for k in 0..j {
+                        sum += l[i * n + k] * l[j * n + k];
+                    }
+                    l[i * n + j] = (data[i * n + j] - sum) / l[j * n + j];
+                }
+            }
+        }
+
+        Array::from_vec(l, Shape::new(vec![n, n]))
+    }
+
+    /// Compute the rank of a matrix.
+    ///
+    /// Uses SVD-like approach (actually QR with tolerance) to estimate rank.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 2.0, 4.0], Shape::new(vec![2, 2]));
+    /// let rank = a.matrix_rank();
+    /// assert_eq!(rank, 1); // Rows are linearly dependent
+    /// ```
+    pub fn matrix_rank(&self) -> usize {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "matrix_rank requires 2D array");
+
+        let (m, n) = (shape[0], shape[1]);
+        let tolerance = 1e-10;
+
+        // Use QR decomposition and count non-zero diagonal elements of R
+        let (_, r) = self.qr();
+        let r_data = r.to_vec();
+        let min_dim = m.min(n);
+
+        let mut rank = 0;
+        for i in 0..min_dim {
+            if r_data[i * n + i].abs() > tolerance {
+                rank += 1;
+            }
+        }
+
+        rank
+    }
+
+    /// Compute eigenvalues of a symmetric matrix using the power method.
+    ///
+    /// Returns approximate eigenvalues for symmetric matrices.
+    /// For non-symmetric matrices, results may not be accurate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![2.0, 1.0, 1.0, 2.0], Shape::new(vec![2, 2]));
+    /// let eigvals = a.eigvalsh();
+    /// // Eigenvalues of this symmetric matrix are 1 and 3
+    /// ```
+    pub fn eigvalsh(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "eigvalsh requires 2D array");
+        assert_eq!(shape[0], shape[1], "eigvalsh requires square matrix");
+
+        let n = shape[0];
+        let mut eigenvalues = Vec::with_capacity(n);
+        let mut a = self.clone();
+
+        // Use deflation with power iteration
+        for _ in 0..n {
+            // Power iteration to find largest eigenvalue
+            let mut v_data = vec![1.0; n];
+
+            for _ in 0..100 {
+                // v = A * v
+                let v = Array::from_vec(v_data.clone(), Shape::new(vec![n]));
+                let av = a.matmul(&v.reshape(Shape::new(vec![n, 1])))
+                    .reshape(Shape::new(vec![n]));
+                let av_data = av.to_vec();
+
+                // Normalize
+                let norm: f32 = av_data.iter().map(|x| x * x).sum::<f32>().sqrt();
+                if norm < 1e-10 {
+                    break;
+                }
+                v_data = av_data.iter().map(|x| x / norm).collect();
+            }
+
+            // Rayleigh quotient: λ = (v^T A v) / (v^T v)
+            let v = Array::from_vec(v_data.clone(), Shape::new(vec![n]));
+            let av = a.matmul(&v.reshape(Shape::new(vec![n, 1])))
+                .reshape(Shape::new(vec![n]));
+            let eigenvalue = v.inner(&av);
+            eigenvalues.push(eigenvalue);
+
+            // Deflate: A = A - λ * v * v^T
+            let mut a_data = a.to_vec();
+            for i in 0..n {
+                for j in 0..n {
+                    a_data[i * n + j] -= eigenvalue * v_data[i] * v_data[j];
+                }
+            }
+            a = Array::from_vec(a_data, Shape::new(vec![n, n]));
+        }
+
+        Array::from_vec(eigenvalues, Shape::new(vec![n]))
+    }
+
+    /// Compute the pseudo-inverse of a matrix using the Moore-Penrose algorithm.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![2, 3]));
+    /// let pinv = a.pinv();
+    /// // pinv has shape [3, 2]
+    /// ```
+    pub fn pinv(&self) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "pinv requires 2D array");
+
+        let (m, n) = (shape[0], shape[1]);
+
+        if m >= n {
+            // A^+ = (A^T A)^-1 A^T
+            let at = self.transpose();
+            let ata = at.matmul(self);
+            let ata_inv = ata.inv();
+            ata_inv.matmul(&at)
+        } else {
+            // A^+ = A^T (A A^T)^-1
+            let at = self.transpose();
+            let aat = self.matmul(&at);
+            let aat_inv = aat.inv();
+            at.matmul(&aat_inv)
+        }
+    }
+
+    /// Compute the condition number of a matrix.
+    ///
+    /// Uses the ratio of the largest to smallest singular value estimate.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+    /// let cond = a.cond();
+    /// assert!((cond - 1.0).abs() < 1e-5); // Identity matrix has condition number 1
+    /// ```
+    pub fn cond(&self) -> f32 {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        let shape = self.shape().as_slice();
+        assert_eq!(shape.len(), 2, "cond requires 2D array");
+
+        // Use A^T A eigenvalues to estimate singular values
+        let at = self.transpose();
+        let ata = at.matmul(self);
+        let eigvals = ata.eigvalsh();
+        let eigvals_data = eigvals.to_vec();
+
+        let max_eigval = eigvals_data.iter().fold(0.0_f32, |a, &b| a.max(b.abs()));
+        let min_eigval = eigvals_data.iter().fold(f32::INFINITY, |a, &b| {
+            if b.abs() > 1e-10 { a.min(b.abs()) } else { a }
+        });
+
+        if min_eigval < 1e-10 {
+            f32::INFINITY
+        } else {
+            (max_eigval / min_eigval).sqrt()
+        }
+    }
 }
 
 /// Helper function for n-dimensional transpose.
