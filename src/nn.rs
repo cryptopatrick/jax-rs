@@ -1044,6 +1044,87 @@ pub fn global_avg_pool(x: &Array) -> f32 {
     x.mean_all()
 }
 
+/// Scaled dot-product attention mechanism.
+///
+/// Computes attention(Q, K, V) = softmax(Q @ K^T / sqrt(d_k)) @ V
+///
+/// This is the core attention mechanism used in Transformers.
+///
+/// # Arguments
+///
+/// * `query` - Query matrix of shape [seq_len_q, d_k]
+/// * `key` - Key matrix of shape [seq_len_k, d_k]
+/// * `value` - Value matrix of shape [seq_len_k, d_v]
+///
+/// # Returns
+///
+/// Attention output of shape [seq_len_q, d_v]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let q = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+/// let k = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+/// let v = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+/// let output = nn::scaled_dot_product_attention(&q, &k, &v);
+/// assert_eq!(output.shape().as_slice(), &[2, 2]);
+/// ```
+pub fn scaled_dot_product_attention(query: &Array, key: &Array, value: &Array) -> Array {
+    assert_eq!(query.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(key.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(value.dtype(), DType::Float32, "Only Float32 supported");
+
+    assert_eq!(query.ndim(), 2, "Query must be 2D [seq_len_q, d_k]");
+    assert_eq!(key.ndim(), 2, "Key must be 2D [seq_len_k, d_k]");
+    assert_eq!(value.ndim(), 2, "Value must be 2D [seq_len_k, d_v]");
+
+    let q_shape = query.shape().as_slice();
+    let k_shape = key.shape().as_slice();
+    let v_shape = value.shape().as_slice();
+
+    let d_k = q_shape[1];
+    assert_eq!(d_k, k_shape[1], "Query and Key must have same dimension d_k");
+    assert_eq!(k_shape[0], v_shape[0], "Key and Value must have same sequence length");
+
+    // Compute Q @ K^T
+    let k_t = key.transpose();
+    let scores = query.matmul(&k_t);
+
+    // Scale by sqrt(d_k)
+    let scale = 1.0 / (d_k as f32).sqrt();
+    let scaled_scores = scores.mul(&Array::from_vec(vec![scale], Shape::new(vec![1])));
+
+    // Apply softmax along the last dimension (key sequence dimension)
+    // For each query position, compute softmax over all key positions
+    let seq_len_q = q_shape[0];
+    let seq_len_k = k_shape[0];
+    let scores_data = scaled_scores.to_vec();
+    let mut attention_weights = vec![0.0; seq_len_q * seq_len_k];
+
+    for i in 0..seq_len_q {
+        let row_start = i * seq_len_k;
+        let row_end = row_start + seq_len_k;
+        let row = &scores_data[row_start..row_end];
+
+        // Compute softmax for this row
+        let max_val = row.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b));
+        let exp_sum: f32 = row.iter().map(|&x| (x - max_val).exp()).sum();
+
+        for j in 0..seq_len_k {
+            attention_weights[row_start + j] = (row[j] - max_val).exp() / exp_sum;
+        }
+    }
+
+    let attention_weights_array = Array::from_vec(
+        attention_weights,
+        Shape::new(vec![seq_len_q, seq_len_k])
+    );
+
+    // Multiply attention weights by values: attention_weights @ V
+    attention_weights_array.matmul(value)
+}
+
 /// 1D convolution operation.
 ///
 /// Applies a 1D convolution over the input array with the given kernel.
@@ -1836,5 +1917,154 @@ mod tests {
         // Batch 1: max(1,2,5,6)=6, max(3,4,7,8)=8
         // Batch 2: max(9,10,13,14)=14, max(11,12,15,16)=16
         assert_eq!(result.to_vec(), vec![6.0, 8.0, 14.0, 16.0]);
+    }
+
+    #[test]
+    fn test_avg_pool1d_basic() {
+        // Test 1D average pooling
+        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], Shape::new(vec![6]));
+        let result = avg_pool1d(&x, 2, None);
+        assert_eq!(result.shape().as_slice(), &[3]);
+        // avg(1,2)=1.5, avg(3,4)=3.5, avg(5,6)=5.5
+        assert_eq!(result.to_vec(), vec![1.5, 3.5, 5.5]);
+    }
+
+    #[test]
+    fn test_avg_pool1d_with_stride() {
+        // Test 1D average pooling with stride
+        let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let result = avg_pool1d(&x, 2, Some(1));
+        assert_eq!(result.shape().as_slice(), &[4]);
+        // avg(1,2)=1.5, avg(2,3)=2.5, avg(3,4)=3.5, avg(4,5)=4.5
+        assert_eq!(result.to_vec(), vec![1.5, 2.5, 3.5, 4.5]);
+    }
+
+    #[test]
+    fn test_avg_pool1d_batched() {
+        // Test 1D average pooling with batch dimension [batch, length]
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0],
+            Shape::new(vec![2, 4]),
+        );
+        let result = avg_pool1d(&x, 2, None);
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+        // Batch 1: avg(1,2)=1.5, avg(3,4)=3.5
+        // Batch 2: avg(10,20)=15.0, avg(30,40)=35.0
+        assert_eq!(result.to_vec(), vec![1.5, 3.5, 15.0, 35.0]);
+    }
+
+    #[test]
+    fn test_avg_pool2d_basic() {
+        // Test 2D average pooling
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+            Shape::new(vec![3, 3]),
+        );
+        let result = avg_pool2d(&x, (2, 2), None);
+        assert_eq!(result.shape().as_slice(), &[1, 1]);
+        // avg(1,2,4,5) = 12.0/4 = 3.0
+        assert_eq!(result.to_vec(), vec![3.0]);
+    }
+
+    #[test]
+    fn test_avg_pool2d_with_stride() {
+        // Test 2D average pooling with stride
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+            ],
+            Shape::new(vec![4, 4]),
+        );
+        let result = avg_pool2d(&x, (2, 2), Some((2, 2)));
+        assert_eq!(result.shape().as_slice(), &[2, 2]);
+        // avg(1,2,5,6)=3.5, avg(3,4,7,8)=5.5
+        // avg(9,10,13,14)=11.5, avg(11,12,15,16)=13.5
+        assert_eq!(result.to_vec(), vec![3.5, 5.5, 11.5, 13.5]);
+    }
+
+    #[test]
+    fn test_avg_pool2d_batched() {
+        // Test 2D average pooling with batch dimension [batch, height, width]
+        let x = Array::from_vec(
+            vec![
+                // Batch 1
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                // Batch 2
+                9.0, 10.0, 11.0, 12.0,
+                13.0, 14.0, 15.0, 16.0,
+            ],
+            Shape::new(vec![2, 2, 4]),
+        );
+        let result = avg_pool2d(&x, (2, 2), None);
+        assert_eq!(result.shape().as_slice(), &[2, 1, 2]);
+        // Batch 1: avg(1,2,5,6)=3.5, avg(3,4,7,8)=5.5
+        // Batch 2: avg(9,10,13,14)=11.5, avg(11,12,15,16)=13.5
+        assert_eq!(result.to_vec(), vec![3.5, 5.5, 11.5, 13.5]);
+    }
+
+    #[test]
+    fn test_avg_pool2d_non_square_kernel() {
+        // Test 2D average pooling with non-square kernel
+        let x = Array::from_vec(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+                9.0, 10.0, 11.0, 12.0,
+            ],
+            Shape::new(vec![3, 4]),
+        );
+        let result = avg_pool2d(&x, (2, 3), Some((2, 3)));
+        assert_eq!(result.shape().as_slice(), &[1, 1]);
+        // avg(1,2,3,5,6,7) = 24.0/6 = 4.0
+        assert_eq!(result.to_vec(), vec![4.0]);
+    }
+
+    #[test]
+    fn test_scaled_dot_product_attention_basic() {
+        // Test basic attention mechanism
+        // Q, K, V are identity matrices - should produce V as output
+        let q = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let k = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let v = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![2, 2]));
+
+        let output = scaled_dot_product_attention(&q, &k, &v);
+        assert_eq!(output.shape().as_slice(), &[2, 2]);
+
+        // Since Q and K are identity, attention should be uniform
+        // Result should be weighted average of V rows
+        let result = output.to_vec();
+        assert_eq!(result.len(), 4);
+    }
+
+    #[test]
+    fn test_scaled_dot_product_attention_simple() {
+        // Test with simple values
+        let q = Array::from_vec(vec![1.0, 0.0], Shape::new(vec![1, 2]));
+        let k = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let v = Array::from_vec(vec![10.0, 20.0], Shape::new(vec![2, 1]));
+
+        let output = scaled_dot_product_attention(&q, &k, &v);
+        assert_eq!(output.shape().as_slice(), &[1, 1]);
+
+        // Query [1, 0] should attend more to first key [1, 0] than second [0, 1]
+        let result = output.to_vec();
+        // Should be closer to 10.0 than 20.0 due to higher attention to first position
+        assert!(result[0] < 15.0);
+    }
+
+    #[test]
+    fn test_scaled_dot_product_attention_shape() {
+        // Test with different sequence lengths
+        let q = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0], Shape::new(vec![3, 2]));
+        let k = Array::from_vec(vec![1.0, 0.0, 0.0, 1.0], Shape::new(vec![2, 2]));
+        let v = Array::from_vec(vec![5.0, 10.0], Shape::new(vec![2, 1]));
+
+        let output = scaled_dot_product_attention(&q, &k, &v);
+        // Output should have shape [seq_len_q, d_v] = [3, 1]
+        assert_eq!(output.shape().as_slice(), &[3, 1]);
     }
 }

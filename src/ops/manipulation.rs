@@ -124,9 +124,16 @@ impl Array {
         }
     }
 
-    /// Select elements from array based on condition.
+    /// Select elements from array based on condition with broadcasting support.
     ///
-    /// Returns elements from `x` where `condition` is true, otherwise from `y`.
+    /// Returns elements from `x` where `condition` is true (non-zero), otherwise from `y`.
+    /// All three arrays are broadcast to a common shape.
+    ///
+    /// # Arguments
+    ///
+    /// * `condition` - Boolean array (non-zero = true, zero = false)
+    /// * `x` - Array of values to select when condition is true
+    /// * `y` - Array of values to select when condition is false
     ///
     /// # Examples
     ///
@@ -139,33 +146,54 @@ impl Array {
     /// assert_eq!(result.to_vec(), vec![10.0, 5.0, 30.0]);
     /// ```
     pub fn where_cond(condition: &Array, x: &Array, y: &Array) -> Array {
-        assert_eq!(
-            condition.dtype(),
-            DType::Float32,
-            "Only Float32 supported"
-        );
+        assert_eq!(condition.dtype(), DType::Float32, "Only Float32 supported");
         assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
         assert_eq!(y.dtype(), DType::Float32, "Only Float32 supported");
 
-        assert_eq!(
-            condition.shape(),
-            x.shape(),
-            "Condition and x must have same shape"
-        );
-        assert_eq!(x.shape(), y.shape(), "x and y must have same shape");
+        // Compute common broadcast shape for all three arrays
+        let shape1 = condition
+            .shape()
+            .broadcast_with(x.shape())
+            .expect("Condition and x shapes are not broadcast-compatible");
+        let result_shape = shape1
+            .broadcast_with(y.shape())
+            .expect("Cannot broadcast all three arrays to common shape");
 
         let cond_data = condition.to_vec();
         let x_data = x.to_vec();
         let y_data = y.to_vec();
 
-        let result_data: Vec<f32> = cond_data
-            .iter()
-            .zip(x_data.iter())
-            .zip(y_data.iter())
-            .map(|((&c, &xv), &yv)| if c != 0.0 { xv } else { yv })
+        // Fast path: all arrays have the same shape (no broadcasting needed)
+        if condition.shape() == x.shape()
+            && x.shape() == y.shape()
+            && condition.shape() == &result_shape
+        {
+            let result_data: Vec<f32> = cond_data
+                .iter()
+                .zip(x_data.iter().zip(y_data.iter()))
+                .map(|(&c, (&x_val, &y_val))| if c != 0.0 { x_val } else { y_val })
+                .collect();
+            return Array::from_vec(result_data, result_shape);
+        }
+
+        // Slow path: need broadcasting
+        let size = result_shape.size();
+        let result_data: Vec<f32> = (0..size)
+            .map(|i| {
+                let cond_idx =
+                    crate::ops::binary::broadcast_index(i, &result_shape, condition.shape());
+                let x_idx = crate::ops::binary::broadcast_index(i, &result_shape, x.shape());
+                let y_idx = crate::ops::binary::broadcast_index(i, &result_shape, y.shape());
+
+                if cond_data[cond_idx] != 0.0 {
+                    x_data[x_idx]
+                } else {
+                    y_data[y_idx]
+                }
+            })
             .collect();
 
-        Array::from_vec(result_data, x.shape().clone())
+        Array::from_vec(result_data, result_shape)
     }
 
     /// Clip (limit) values in an array.
@@ -904,6 +932,152 @@ impl Array {
         Array::from_vec(data, self.shape().clone())
     }
 
+    /// Scatter update values into an array at specified indices.
+    ///
+    /// Returns a new array with values from `updates` placed at positions
+    /// specified by `indices`. This is equivalent to `put()` but follows
+    /// the JAX/NumPy scatter naming convention.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Flattened indices where updates should be placed
+    /// * `updates` - Values to place at the specified indices
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let result = a.scatter(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+    /// assert_eq!(result.to_vec(), vec![10.0, 2.0, 30.0, 4.0, 50.0]);
+    /// ```
+    pub fn scatter(&self, indices: &[usize], updates: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            updates.len(),
+            "Number of indices must match number of updates"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] = updates[i];
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Scatter-add values into an array at specified indices.
+    ///
+    /// Returns a new array with values from `updates` added to the values
+    /// at positions specified by `indices`. If the same index appears multiple
+    /// times, updates are accumulated.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Flattened indices where updates should be added
+    /// * `updates` - Values to add at the specified indices
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+    /// let result = a.scatter_add(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+    /// assert_eq!(result.to_vec(), vec![11.0, 2.0, 33.0, 4.0, 55.0]);
+    /// ```
+    pub fn scatter_add(&self, indices: &[usize], updates: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            updates.len(),
+            "Number of indices must match number of updates"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] += updates[i];
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Scatter-min values into an array at specified indices.
+    ///
+    /// Returns a new array where each position specified by `indices` contains
+    /// the minimum of the original value and the corresponding update value.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Flattened indices where min operation should be applied
+    /// * `updates` - Values to compare with current values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, 10.0, 15.0, 20.0, 25.0], Shape::new(vec![5]));
+    /// let result = a.scatter_min(&[1, 2, 3], &[8.0, 20.0, 15.0]);
+    /// assert_eq!(result.to_vec(), vec![5.0, 8.0, 15.0, 15.0, 25.0]);
+    /// ```
+    pub fn scatter_min(&self, indices: &[usize], updates: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            updates.len(),
+            "Number of indices must match number of updates"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] = data[idx].min(updates[i]);
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
+    /// Scatter-max values into an array at specified indices.
+    ///
+    /// Returns a new array where each position specified by `indices` contains
+    /// the maximum of the original value and the corresponding update value.
+    ///
+    /// # Arguments
+    ///
+    /// * `indices` - Flattened indices where max operation should be applied
+    /// * `updates` - Values to compare with current values
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, Shape};
+    /// let a = Array::from_vec(vec![5.0, 10.0, 15.0, 20.0, 25.0], Shape::new(vec![5]));
+    /// let result = a.scatter_max(&[1, 2, 3], &[12.0, 10.0, 25.0]);
+    /// assert_eq!(result.to_vec(), vec![5.0, 12.0, 15.0, 25.0, 25.0]);
+    /// ```
+    pub fn scatter_max(&self, indices: &[usize], updates: &[f32]) -> Array {
+        assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
+        assert_eq!(
+            indices.len(),
+            updates.len(),
+            "Number of indices must match number of updates"
+        );
+
+        let mut data = self.to_vec();
+
+        for (i, &idx) in indices.iter().enumerate() {
+            assert!(idx < data.len(), "Index {} out of bounds", idx);
+            data[idx] = data[idx].max(updates[i]);
+        }
+
+        Array::from_vec(data, self.shape().clone())
+    }
+
     /// Take values from an array along an axis using indices.
     ///
     /// This is similar to gather operations in other frameworks.
@@ -1569,6 +1743,76 @@ mod tests {
     }
 
     #[test]
+    fn test_where_cond_broadcast_scalar_condition() {
+        let condition = Array::from_vec(vec![1.0], Shape::new(vec![1]));
+        let x = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let y = Array::from_vec(vec![100.0, 200.0, 300.0], Shape::new(vec![3]));
+        let result = Array::where_cond(&condition, &x, &y);
+        assert_eq!(result.to_vec(), vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn test_where_cond_broadcast_scalar_x() {
+        let condition = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+        let x = Array::from_vec(vec![42.0], Shape::new(vec![1]));
+        let y = Array::from_vec(vec![100.0, 200.0, 300.0], Shape::new(vec![3]));
+        let result = Array::where_cond(&condition, &x, &y);
+        assert_eq!(result.to_vec(), vec![42.0, 200.0, 42.0]);
+    }
+
+    #[test]
+    fn test_where_cond_broadcast_scalar_y() {
+        let condition = Array::from_vec(vec![1.0, 0.0, 1.0], Shape::new(vec![3]));
+        let x = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let y = Array::from_vec(vec![99.0], Shape::new(vec![1]));
+        let result = Array::where_cond(&condition, &x, &y);
+        assert_eq!(result.to_vec(), vec![10.0, 99.0, 30.0]);
+    }
+
+    #[test]
+    fn test_where_cond_2d() {
+        let condition = Array::from_vec(
+            vec![1.0, 0.0, 0.0, 1.0],
+            Shape::new(vec![2, 2])
+        );
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0],
+            Shape::new(vec![2, 2])
+        );
+        let y = Array::from_vec(
+            vec![10.0, 20.0, 30.0, 40.0],
+            Shape::new(vec![2, 2])
+        );
+        let result = Array::where_cond(&condition, &x, &y);
+        assert_eq!(result.to_vec(), vec![1.0, 20.0, 30.0, 4.0]);
+    }
+
+    #[test]
+    fn test_where_cond_broadcast_2d() {
+        let condition = Array::from_vec(vec![1.0, 0.0], Shape::new(vec![2]));
+        let x = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0],
+            Shape::new(vec![2, 2])
+        );
+        let y = Array::from_vec(
+            vec![10.0, 20.0, 30.0, 40.0],
+            Shape::new(vec![2, 2])
+        );
+        let result = Array::where_cond(&condition, &x, &y);
+        assert_eq!(result.to_vec(), vec![1.0, 20.0, 3.0, 40.0]);
+    }
+
+    #[test]
+    fn test_where_cond_negative_values() {
+        let condition = Array::from_vec(vec![-5.0, 0.0, 3.14], Shape::new(vec![3]));
+        let x = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let y = Array::from_vec(vec![100.0, 200.0, 300.0], Shape::new(vec![3]));
+        let result = Array::where_cond(&condition, &x, &y);
+        // -5.0 is non-zero (true), 0.0 is zero (false), 3.14 is non-zero (true)
+        assert_eq!(result.to_vec(), vec![10.0, 200.0, 30.0]);
+    }
+
+    #[test]
     fn test_clip() {
         let a = Array::from_vec(
             vec![-5.0, 0.0, 5.0, 10.0, 15.0],
@@ -1904,6 +2148,70 @@ mod tests {
         );
         let result2d = a2d.put(&[0, 5], &[100.0, 600.0]);
         assert_eq!(result2d.to_vec(), vec![100.0, 2.0, 3.0, 4.0, 5.0, 600.0]);
+    }
+
+    #[test]
+    fn test_scatter() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let result = a.scatter(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+        assert_eq!(result.to_vec(), vec![10.0, 2.0, 30.0, 4.0, 50.0]);
+        assert_eq!(result.shape().as_slice(), &[5]);
+
+        // Test with 2D array (flattened indexing)
+        let a2d = Array::from_vec(
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            Shape::new(vec![2, 3]),
+        );
+        let result2d = a2d.scatter(&[0, 5], &[100.0, 600.0]);
+        assert_eq!(result2d.to_vec(), vec![100.0, 2.0, 3.0, 4.0, 5.0, 600.0]);
+    }
+
+    #[test]
+    fn test_scatter_add() {
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
+        let result = a.scatter_add(&[0, 2, 4], &[10.0, 30.0, 50.0]);
+        assert_eq!(result.to_vec(), vec![11.0, 2.0, 33.0, 4.0, 55.0]);
+
+        // Test with duplicate indices (accumulates)
+        let a2 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let result2 = a2.scatter_add(&[0, 0, 1], &[5.0, 3.0, 10.0]);
+        assert_eq!(result2.to_vec(), vec![9.0, 12.0, 3.0]); // 1+5+3=9, 2+10=12, 3
+    }
+
+    #[test]
+    fn test_scatter_min() {
+        let a = Array::from_vec(vec![5.0, 10.0, 15.0, 20.0, 25.0], Shape::new(vec![5]));
+        let result = a.scatter_min(&[1, 2, 3], &[8.0, 20.0, 15.0]);
+        assert_eq!(result.to_vec(), vec![5.0, 8.0, 15.0, 15.0, 25.0]);
+
+        // Test where update is larger (no change)
+        let a2 = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let result2 = a2.scatter_min(&[0, 1, 2], &[5.0, 10.0, 15.0]);
+        assert_eq!(result2.to_vec(), vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn test_scatter_max() {
+        let a = Array::from_vec(vec![5.0, 10.0, 15.0, 20.0, 25.0], Shape::new(vec![5]));
+        let result = a.scatter_max(&[1, 2, 3], &[12.0, 10.0, 25.0]);
+        assert_eq!(result.to_vec(), vec![5.0, 12.0, 15.0, 25.0, 25.0]);
+
+        // Test where update is smaller (no change)
+        let a2 = Array::from_vec(vec![10.0, 20.0, 30.0], Shape::new(vec![3]));
+        let result2 = a2.scatter_max(&[0, 1, 2], &[5.0, 10.0, 15.0]);
+        assert_eq!(result2.to_vec(), vec![10.0, 20.0, 30.0]);
+    }
+
+    #[test]
+    fn test_scatter_duplicate_indices() {
+        // scatter: last update wins
+        let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
+        let result = a.scatter(&[0, 0], &[10.0, 20.0]);
+        assert_eq!(result.to_vec(), vec![20.0, 2.0, 3.0]); // Last value wins
+
+        // scatter_add: accumulates
+        let result2 = a.scatter_add(&[0, 0], &[10.0, 20.0]);
+        assert_eq!(result2.to_vec(), vec![31.0, 2.0, 3.0]); // 1 + 10 + 20 = 31
     }
 
     #[test]
