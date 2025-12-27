@@ -100,6 +100,18 @@ impl Array {
         compare_op(self, other, |a, b| a == b)
     }
 
+    /// Element-wise equality comparison with a scalar.
+    ///
+    /// Returns an array where each element is 1.0 if equal to the scalar, 0.0 otherwise.
+    pub fn eq_scalar(&self, value: f32) -> Array {
+        let data = self.to_vec();
+        let result: Vec<f32> = data
+            .iter()
+            .map(|&x| if x == value { 1.0 } else { 0.0 })
+            .collect();
+        Array::from_vec(result, self.shape().clone())
+    }
+
     /// Element-wise inequality comparison.
     pub fn ne(&self, other: &Array) -> Array {
         compare_op(self, other, |a, b| a != b)

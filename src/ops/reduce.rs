@@ -190,6 +190,24 @@ impl Array {
         self.sum_all() / (self.size() as f32)
     }
 
+    /// Mean of all elements, returning a scalar array.
+    pub fn mean_all_array(&self) -> Array {
+        let val = self.mean_all();
+        let result = Array::from_vec(vec![val], crate::Shape::scalar());
+
+        // Register with trace context if tracing is active
+        if is_tracing() {
+            trace_reduce(
+                result.id(),
+                Primitive::MeanAll,
+                self,
+                crate::Shape::scalar(),
+            );
+        }
+
+        result
+    }
+
     /// Mean along a specific axis.
     pub fn mean(&self, axis: usize) -> Array {
         reduce_axis(self, axis, Primitive::Mean { axis }, 0.0, |acc, x| {

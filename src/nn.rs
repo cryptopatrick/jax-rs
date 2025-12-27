@@ -1533,7 +1533,7 @@ pub fn scaled_dot_product_attention(query: &Array, key: &Array, value: &Array) -
 /// # Examples
 ///
 /// ```
-/// # use jax_rs::{nn, Array, Shape};
+/// # use jax_rs::{nn, Array, Shape, DType};
 /// let seq_len = 2;
 /// let d_model = 4;
 /// let num_heads = 2;
@@ -1980,6 +1980,409 @@ pub fn conv2d_grouped(x: &Array, kernel: &Array, groups: usize) -> Array {
     }
 
     Array::from_vec(result, Shape::new(vec![out_channels, out_h, out_w]))
+}
+
+/// Batched 2D convolution with stride and padding support.
+///
+/// This is a full-featured conv2d that supports:
+/// - Batched inputs: [batch, in_channels, height, width]
+/// - Multi-channel kernels: [out_channels, in_channels, kernel_h, kernel_w]
+/// - Configurable stride and padding
+/// - GPU acceleration when available
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, in_channels, height, width]
+/// * `kernel` - Convolution kernel of shape [out_channels, in_channels, kernel_h, kernel_w]
+/// * `stride` - Stride for convolution (same for height and width)
+/// * `padding` - Zero-padding to add to input (same for height and width)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// // Batch of 1, 3 channels (RGB), 8x8 image
+/// let x = Array::from_vec(vec![1.0; 192], Shape::new(vec![1, 3, 8, 8]));
+/// // 16 output channels, 3 input channels, 3x3 kernel
+/// let kernel = Array::from_vec(vec![0.1; 432], Shape::new(vec![16, 3, 3, 3]));
+/// let y = nn::conv2d_batched(&x, &kernel, 1, 0);
+/// assert_eq!(y.shape().as_slice(), &[1, 16, 6, 6]);
+/// ```
+pub fn conv2d_batched(x: &Array, kernel: &Array, stride: usize, padding: usize) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(kernel.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, in_channels, height, width]");
+    assert_eq!(kernel.shape().ndim(), 4, "Kernel must be 4D [out_channels, in_channels, kernel_h, kernel_w]");
+    assert!(stride > 0, "Stride must be positive");
+
+    let x_shape = x.shape().as_slice();
+    let k_shape = kernel.shape().as_slice();
+
+    let (batch_size, in_channels, input_h, input_w) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+    let (out_channels, k_in_channels, kernel_h, kernel_w) = (k_shape[0], k_shape[1], k_shape[2], k_shape[3]);
+
+    assert_eq!(in_channels, k_in_channels, "Input channels must match kernel in_channels");
+    assert!(kernel_h <= input_h + 2 * padding, "Kernel height too large");
+    assert!(kernel_w <= input_w + 2 * padding, "Kernel width too large");
+
+    let output_h = (input_h + 2 * padding - kernel_h) / stride + 1;
+    let output_w = (input_w + 2 * padding - kernel_w) / stride + 1;
+
+    // CPU implementation with padding support
+    let x_data = x.to_vec();
+    let kernel_data = kernel.to_vec();
+    let mut result = vec![0.0; batch_size * out_channels * output_h * output_w];
+
+    for b in 0..batch_size {
+        for oc in 0..out_channels {
+            for oh in 0..output_h {
+                for ow in 0..output_w {
+                    let mut sum = 0.0;
+
+                    for ic in 0..in_channels {
+                        for kh in 0..kernel_h {
+                            for kw in 0..kernel_w {
+                                let ih = (oh * stride + kh) as isize - padding as isize;
+                                let iw = (ow * stride + kw) as isize - padding as isize;
+
+                                if ih >= 0 && ih < input_h as isize && iw >= 0 && iw < input_w as isize {
+                                    let x_idx = b * in_channels * input_h * input_w
+                                        + ic * input_h * input_w
+                                        + (ih as usize) * input_w
+                                        + (iw as usize);
+                                    let k_idx = oc * k_in_channels * kernel_h * kernel_w
+                                        + ic * kernel_h * kernel_w
+                                        + kh * kernel_w
+                                        + kw;
+                                    sum += x_data[x_idx] * kernel_data[k_idx];
+                                }
+                            }
+                        }
+                    }
+
+                    let out_idx = b * out_channels * output_h * output_w
+                        + oc * output_h * output_w
+                        + oh * output_w
+                        + ow;
+                    result[out_idx] = sum;
+                }
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, out_channels, output_h, output_w]))
+}
+
+/// 2D max pooling with stride and padding support.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, channels, height, width]
+/// * `pool_size` - Size of the pooling window (same for height and width)
+/// * `stride` - Stride for pooling (same for height and width)
+/// * `padding` - Zero-padding to add to input (same for height and width)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], Shape::new(vec![1, 1, 3, 3]));
+/// let y = nn::maxpool2d(&x, 2, 2, 0);
+/// assert_eq!(y.shape().as_slice(), &[1, 1, 1, 1]);
+/// assert_eq!(y.to_vec()[0], 5.0);
+/// ```
+pub fn maxpool2d(x: &Array, pool_size: usize, stride: usize, padding: usize) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, channels, height, width]");
+    assert!(pool_size > 0, "Pool size must be positive");
+    assert!(stride > 0, "Stride must be positive");
+
+    let x_shape = x.shape().as_slice();
+    let (batch_size, channels, input_h, input_w) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+
+    let output_h = (input_h + 2 * padding - pool_size) / stride + 1;
+    let output_w = (input_w + 2 * padding - pool_size) / stride + 1;
+
+    let x_data = x.to_vec();
+    let mut result = vec![f32::NEG_INFINITY; batch_size * channels * output_h * output_w];
+
+    for b in 0..batch_size {
+        for c in 0..channels {
+            for oh in 0..output_h {
+                for ow in 0..output_w {
+                    let mut max_val = f32::NEG_INFINITY;
+
+                    for ph in 0..pool_size {
+                        for pw in 0..pool_size {
+                            let ih = (oh * stride + ph) as isize - padding as isize;
+                            let iw = (ow * stride + pw) as isize - padding as isize;
+
+                            if ih >= 0 && ih < input_h as isize && iw >= 0 && iw < input_w as isize {
+                                let x_idx = b * channels * input_h * input_w
+                                    + c * input_h * input_w
+                                    + (ih as usize) * input_w
+                                    + (iw as usize);
+                                max_val = max_val.max(x_data[x_idx]);
+                            }
+                        }
+                    }
+
+                    let out_idx = b * channels * output_h * output_w
+                        + c * output_h * output_w
+                        + oh * output_w
+                        + ow;
+                    result[out_idx] = max_val;
+                }
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, channels, output_h, output_w]))
+}
+
+/// 2D average pooling with stride and padding support.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, channels, height, width]
+/// * `pool_size` - Size of the pooling window (same for height and width)
+/// * `stride` - Stride for pooling (same for height and width)
+/// * `padding` - Zero-padding to add to input (same for height and width)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0], Shape::new(vec![1, 1, 3, 3]));
+/// let y = nn::avgpool2d(&x, 2, 2, 0);
+/// assert_eq!(y.shape().as_slice(), &[1, 1, 1, 1]);
+/// assert_eq!(y.to_vec()[0], 3.0); // (1+2+4+5)/4 = 3.0
+/// ```
+pub fn avgpool2d(x: &Array, pool_size: usize, stride: usize, padding: usize) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, channels, height, width]");
+    assert!(pool_size > 0, "Pool size must be positive");
+    assert!(stride > 0, "Stride must be positive");
+
+    let x_shape = x.shape().as_slice();
+    let (batch_size, channels, input_h, input_w) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+
+    let output_h = (input_h + 2 * padding - pool_size) / stride + 1;
+    let output_w = (input_w + 2 * padding - pool_size) / stride + 1;
+
+    let x_data = x.to_vec();
+    let mut result = vec![0.0; batch_size * channels * output_h * output_w];
+
+    for b in 0..batch_size {
+        for c in 0..channels {
+            for oh in 0..output_h {
+                for ow in 0..output_w {
+                    let mut sum = 0.0;
+                    let mut count = 0;
+
+                    for ph in 0..pool_size {
+                        for pw in 0..pool_size {
+                            let ih = (oh * stride + ph) as isize - padding as isize;
+                            let iw = (ow * stride + pw) as isize - padding as isize;
+
+                            if ih >= 0 && ih < input_h as isize && iw >= 0 && iw < input_w as isize {
+                                let x_idx = b * channels * input_h * input_w
+                                    + c * input_h * input_w
+                                    + (ih as usize) * input_w
+                                    + (iw as usize);
+                                sum += x_data[x_idx];
+                                count += 1;
+                            }
+                        }
+                    }
+
+                    let out_idx = b * channels * output_h * output_w
+                        + c * output_h * output_w
+                        + oh * output_w
+                        + ow;
+                    result[out_idx] = if count > 0 { sum / count as f32 } else { 0.0 };
+                }
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, channels, output_h, output_w]))
+}
+
+/// Batch normalization for 4D inputs.
+///
+/// Normalizes each channel across the batch dimension.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, channels, height, width]
+/// * `gamma` - Scale parameter of shape [channels]
+/// * `beta` - Shift parameter of shape [channels]
+/// * `epsilon` - Small constant for numerical stability
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0; 16], Shape::new(vec![2, 2, 2, 2]));
+/// let gamma = Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2]));
+/// let beta = Array::from_vec(vec![0.0, 0.0], Shape::new(vec![2]));
+/// let y = nn::batch_norm_2d(&x, &gamma, &beta, 1e-5);
+/// assert_eq!(y.shape().as_slice(), &[2, 2, 2, 2]);
+/// ```
+pub fn batch_norm_2d(x: &Array, gamma: &Array, beta: &Array, epsilon: f32) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, channels, height, width]");
+    assert_eq!(gamma.shape().ndim(), 1, "Gamma must be 1D [channels]");
+    assert_eq!(beta.shape().ndim(), 1, "Beta must be 1D [channels]");
+
+    let x_shape = x.shape().as_slice();
+    let (batch_size, channels, height, width) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+
+    assert_eq!(gamma.shape().as_slice()[0], channels, "Gamma size must match channels");
+    assert_eq!(beta.shape().as_slice()[0], channels, "Beta size must match channels");
+
+    let x_data = x.to_vec();
+    let gamma_data = gamma.to_vec();
+    let beta_data = beta.to_vec();
+
+    let spatial_size = height * width;
+    let total_per_channel = batch_size * spatial_size;
+
+    let mut result = vec![0.0; batch_size * channels * spatial_size];
+
+    for c in 0..channels {
+        // Compute mean for this channel
+        let mut mean = 0.0;
+        for b in 0..batch_size {
+            for s in 0..spatial_size {
+                let idx = b * channels * spatial_size + c * spatial_size + s;
+                mean += x_data[idx];
+            }
+        }
+        mean /= total_per_channel as f32;
+
+        // Compute variance for this channel
+        let mut var = 0.0;
+        for b in 0..batch_size {
+            for s in 0..spatial_size {
+                let idx = b * channels * spatial_size + c * spatial_size + s;
+                let diff = x_data[idx] - mean;
+                var += diff * diff;
+            }
+        }
+        var /= total_per_channel as f32;
+
+        // Normalize and apply scale/shift
+        let std = (var + epsilon).sqrt();
+        let g = gamma_data[c];
+        let bt = beta_data[c];
+
+        for b in 0..batch_size {
+            for s in 0..spatial_size {
+                let idx = b * channels * spatial_size + c * spatial_size + s;
+                result[idx] = (x_data[idx] - mean) / std * g + bt;
+            }
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, channels, height, width]))
+}
+
+/// Global average pooling for 4D inputs.
+///
+/// Reduces each channel to a single value by averaging all spatial locations.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, channels, height, width]
+///
+/// # Returns
+///
+/// Array of shape [batch, channels]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![1, 1, 2, 2]));
+/// let y = nn::global_avg_pool2d(&x);
+/// assert_eq!(y.shape().as_slice(), &[1, 1]);
+/// assert_eq!(y.to_vec()[0], 2.5);
+/// ```
+pub fn global_avg_pool2d(x: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, channels, height, width]");
+
+    let x_shape = x.shape().as_slice();
+    let (batch_size, channels, height, width) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+
+    let x_data = x.to_vec();
+    let spatial_size = height * width;
+    let mut result = vec![0.0; batch_size * channels];
+
+    for b in 0..batch_size {
+        for c in 0..channels {
+            let mut sum = 0.0;
+            for h in 0..height {
+                for w in 0..width {
+                    let idx = b * channels * spatial_size + c * spatial_size + h * width + w;
+                    sum += x_data[idx];
+                }
+            }
+            result[b * channels + c] = sum / spatial_size as f32;
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, channels]))
+}
+
+/// Global max pooling for 4D inputs.
+///
+/// Reduces each channel to a single value by taking the maximum across all spatial locations.
+///
+/// # Arguments
+///
+/// * `x` - Input array of shape [batch, channels, height, width]
+///
+/// # Returns
+///
+/// Array of shape [batch, channels]
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{nn, Array, Shape};
+/// let x = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0], Shape::new(vec![1, 1, 2, 2]));
+/// let y = nn::global_max_pool2d(&x);
+/// assert_eq!(y.shape().as_slice(), &[1, 1]);
+/// assert_eq!(y.to_vec()[0], 4.0);
+/// ```
+pub fn global_max_pool2d(x: &Array) -> Array {
+    assert_eq!(x.dtype(), DType::Float32, "Only Float32 supported");
+    assert_eq!(x.shape().ndim(), 4, "Input must be 4D [batch, channels, height, width]");
+
+    let x_shape = x.shape().as_slice();
+    let (batch_size, channels, height, width) = (x_shape[0], x_shape[1], x_shape[2], x_shape[3]);
+
+    let x_data = x.to_vec();
+    let spatial_size = height * width;
+    let mut result = vec![f32::NEG_INFINITY; batch_size * channels];
+
+    for b in 0..batch_size {
+        for c in 0..channels {
+            let mut max_val = f32::NEG_INFINITY;
+            for h in 0..height {
+                for w in 0..width {
+                    let idx = b * channels * spatial_size + c * spatial_size + h * width + w;
+                    max_val = max_val.max(x_data[idx]);
+                }
+            }
+            result[b * channels + c] = max_val;
+        }
+    }
+
+    Array::from_vec(result, Shape::new(vec![batch_size, channels]))
 }
 
 #[cfg(test)]

@@ -54,7 +54,7 @@ impl Array {
         let mut result_dims = first_shape.as_slice().to_vec();
         result_dims[axis] =
             arrays.iter().map(|a| a.shape().as_slice()[axis]).sum();
-        let result_shape = Shape::new(result_dims);
+        let result_shape = Shape::new(result_dims.clone());
 
         // Simple implementation for axis 0
         if axis == 0 {
@@ -64,9 +64,35 @@ impl Array {
             }
             Array::from_vec(data, result_shape)
         } else {
-            // For other axes, need more complex indexing
-            // For now, only support axis 0
-            panic!("concatenate only supports axis=0 for now");
+            // General implementation for any axis
+            // Compute strides for the result array
+            let total_size: usize = result_dims.iter().product();
+            let mut result = vec![0.0f32; total_size];
+
+            // Compute the size of chunks before and after the concatenation axis
+            let outer_size: usize = result_dims[..axis].iter().product();
+            let inner_size: usize = result_dims[axis + 1..].iter().product();
+
+            let mut offset_along_axis = 0;
+            for arr in arrays {
+                let arr_data = arr.to_vec();
+                let arr_shape = arr.shape().as_slice();
+                let arr_axis_size = arr_shape[axis];
+
+                for outer in 0..outer_size {
+                    for ax in 0..arr_axis_size {
+                        for inner in 0..inner_size {
+                            let src_idx = outer * arr_axis_size * inner_size + ax * inner_size + inner;
+                            let dst_ax = offset_along_axis + ax;
+                            let dst_idx = outer * result_dims[axis] * inner_size + dst_ax * inner_size + inner;
+                            result[dst_idx] = arr_data[src_idx];
+                        }
+                    }
+                }
+                offset_along_axis += arr_axis_size;
+            }
+
+            Array::from_vec(result, result_shape)
         }
     }
 
@@ -130,7 +156,7 @@ impl Array {
     ///
     /// * `array` - The array to split
     /// * `num_sections` - Number of equal sections to split into
-    /// * `axis` - The axis along which to split (only axis=0 supported currently)
+    /// * `axis` - The axis along which to split
     ///
     /// # Examples
     ///
@@ -146,9 +172,9 @@ impl Array {
     pub fn split(array: &Array, num_sections: usize, axis: usize) -> Vec<Array> {
         assert_eq!(array.dtype(), DType::Float32, "Only Float32 supported");
         assert!(num_sections > 0, "Number of sections must be positive");
-        assert_eq!(axis, 0, "split only supports axis=0 for now");
 
         let shape = array.shape().as_slice();
+        assert!(axis < shape.len(), "Axis out of bounds");
         let axis_size = shape[axis];
         assert_eq!(
             axis_size % num_sections,
@@ -162,7 +188,7 @@ impl Array {
         let mut result = Vec::with_capacity(num_sections);
 
         if axis == 0 {
-            // Split along axis 0
+            // Split along axis 0 - simple case
             let elements_per_section = data.len() / num_sections;
 
             for i in 0..num_sections {
@@ -176,7 +202,28 @@ impl Array {
                 result.push(Array::from_vec(section_data, Shape::new(section_shape)));
             }
         } else {
-            panic!("split only supports axis=0 for now");
+            // General case for any axis
+            let outer_size: usize = shape[..axis].iter().product();
+            let inner_size: usize = shape[axis + 1..].iter().product();
+
+            for section_idx in 0..num_sections {
+                let mut section_data = Vec::with_capacity(outer_size * section_size * inner_size);
+
+                for outer in 0..outer_size {
+                    for ax in 0..section_size {
+                        let src_ax = section_idx * section_size + ax;
+                        for inner in 0..inner_size {
+                            let src_idx = outer * axis_size * inner_size + src_ax * inner_size + inner;
+                            section_data.push(data[src_idx]);
+                        }
+                    }
+                }
+
+                let mut section_shape = shape.to_vec();
+                section_shape[axis] = section_size;
+
+                result.push(Array::from_vec(section_data, Shape::new(section_shape)));
+            }
         }
 
         result
@@ -914,10 +961,10 @@ impl Array {
     /// # Examples
     ///
     /// ```
-    /// # use jax_rs::{Array, Shape, ops::manipulation};
+    /// # use jax_rs::{Array, Shape};
     /// let a = Array::from_vec(vec![1.0, 2.0, 3.0], Shape::new(vec![3]));
     /// let b = Array::from_vec(vec![10.0, 20.0], Shape::new(vec![2, 1]));
-    /// let broadcasted = manipulation::broadcast_arrays(&[a, b]);
+    /// let broadcasted = Array::broadcast_arrays(&[a, b]);
     ///
     /// // Both should have shape [2, 3]
     /// assert_eq!(broadcasted[0].shape().as_slice(), &[2, 3]);
@@ -1839,9 +1886,10 @@ impl Array {
     /// let signal = Array::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0], Shape::new(vec![5]));
     /// let kernel = Array::from_vec(vec![1.0, 0.0, -1.0], Shape::new(vec![3]));
     /// let conv = signal.convolve(&kernel);
-    /// // [1*1 + 2*0 + 3*(-1), 2*1 + 3*0 + 4*(-1), 3*1 + 4*0 + 5*(-1)]
-    /// // = [1+0-3, 2+0-4, 3+0-5] = [-2, -2, -2]
-    /// assert_eq!(conv.to_vec(), vec![-2.0, -2.0, -2.0]);
+    /// // Convolution flips the kernel: [-1, 0, 1]
+    /// // [1*(-1) + 2*0 + 3*1, 2*(-1) + 3*0 + 4*1, 3*(-1) + 4*0 + 5*1]
+    /// // = [-1+0+3, -2+0+4, -3+0+5] = [2, 2, 2]
+    /// assert_eq!(conv.to_vec(), vec![2.0, 2.0, 2.0]);
     /// ```
     pub fn convolve(&self, kernel: &Array) -> Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");

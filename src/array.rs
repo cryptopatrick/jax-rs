@@ -68,7 +68,6 @@ impl Array {
 
     /// Create a new array filled with ones.
     pub fn ones(shape: Shape, dtype: DType) -> Self {
-        assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
         let device = crate::default_device();
         let size = shape.size();
         let buffer = Buffer::filled(1.0, size, dtype, device);
@@ -78,7 +77,6 @@ impl Array {
 
     /// Create a new array filled with a specific value.
     pub fn full(value: f32, shape: Shape, dtype: DType) -> Self {
-        assert_eq!(dtype, DType::Float32, "Only Float32 supported for now");
         let device = crate::default_device();
         let size = shape.size();
         let buffer = Buffer::filled(value, size, dtype, device);
@@ -108,6 +106,96 @@ impl Array {
         );
         let device = crate::default_device();
         let buffer = Buffer::from_f32(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<i32>.
+    pub fn from_vec_i32(data: Vec<i32>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_i32(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<i8>.
+    pub fn from_vec_i8(data: Vec<i8>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_i8(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<u8>.
+    pub fn from_vec_u8(data: Vec<u8>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_u8(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<i16>.
+    pub fn from_vec_i16(data: Vec<i16>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_i16(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<u16>.
+    pub fn from_vec_u16(data: Vec<u16>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_u16(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<i64>.
+    pub fn from_vec_i64(data: Vec<i64>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_i64(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<u32>.
+    pub fn from_vec_u32(data: Vec<u32>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_u32(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<u64>.
+    pub fn from_vec_u64(data: Vec<u64>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_u64(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<f64>.
+    pub fn from_vec_f64(data: Vec<f64>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_f64(data, device);
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
+    }
+
+    /// Create an array from a Vec<bool>.
+    pub fn from_vec_bool(data: Vec<bool>, shape: Shape) -> Self {
+        assert_eq!(data.len(), shape.size(), "Data length must match shape size");
+        let device = crate::default_device();
+        let buffer = Buffer::from_bool(data, device);
         let strides = shape.default_strides();
         Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
@@ -166,17 +254,100 @@ impl Array {
         self.shape.is_scalar()
     }
 
-    /// Copy data to a Vec (synchronous).
+    /// Copy data to a Vec<f32> (synchronous).
     ///
     /// This materializes the array and copies all data to CPU memory.
-    /// For Float32 arrays only (for now).
+    /// Data is converted to f32 regardless of the array's dtype.
     pub fn to_vec(&self) -> Vec<f32> {
-        assert_eq!(self.dtype(), DType::Float32);
         // For now, we only support contiguous arrays
         // TODO: Handle strided/sliced arrays
         assert_eq!(self.offset, 0);
         assert_eq!(self.strides, self.shape.default_strides());
-        self.buffer.to_f32_vec()
+        self.buffer.to_f32_vec_converted()
+    }
+
+    /// Copy data to a Vec<bool> (for Bool dtype arrays).
+    pub fn to_bool_vec(&self) -> Vec<bool> {
+        assert_eq!(self.dtype(), DType::Bool, "to_bool_vec requires Bool dtype");
+        assert_eq!(self.offset, 0);
+        assert_eq!(self.strides, self.shape.default_strides());
+        self.buffer.to_bool_vec()
+    }
+
+    /// Cast array to a different dtype.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use jax_rs::{Array, DType, Shape};
+    /// let a = Array::from_vec(vec![1.0, 2.5, 3.9], Shape::new(vec![3]));
+    /// let b = a.astype(DType::Int32);
+    /// assert_eq!(b.dtype(), DType::Int32);
+    /// let data = b.to_vec();
+    /// assert_eq!(data, vec![1.0, 2.0, 3.0]); // truncated to integers
+    /// ```
+    pub fn astype(&self, dtype: DType) -> Self {
+        if self.dtype() == dtype {
+            return self.clone();
+        }
+
+        // Read current data as f32
+        let data = self.to_vec();
+
+        // Create new array with target dtype, casting values
+        let device = self.device();
+        let shape = self.shape.clone();
+
+        let buffer = match dtype {
+            DType::Float32 => Buffer::from_f32(data, device),
+            DType::Float64 => {
+                let casted: Vec<f64> = data.iter().map(|&x| x as f64).collect();
+                Buffer::from_f64(casted, device)
+            }
+            DType::Float16 => {
+                // Float16 is stored as f32 internally for now
+                Buffer::from_f32_as_dtype(data, DType::Float16, device)
+            }
+            DType::Int8 => {
+                let casted: Vec<i8> = data.iter().map(|&x| x as i8).collect();
+                Buffer::from_i8(casted, device)
+            }
+            DType::Int16 => {
+                let casted: Vec<i16> = data.iter().map(|&x| x as i16).collect();
+                Buffer::from_i16(casted, device)
+            }
+            DType::Int32 => {
+                let casted: Vec<i32> = data.iter().map(|&x| x as i32).collect();
+                Buffer::from_i32(casted, device)
+            }
+            DType::Int64 => {
+                let casted: Vec<i64> = data.iter().map(|&x| x as i64).collect();
+                Buffer::from_i64(casted, device)
+            }
+            DType::Uint8 => {
+                let casted: Vec<u8> = data.iter().map(|&x| x as u8).collect();
+                Buffer::from_u8(casted, device)
+            }
+            DType::Uint16 => {
+                let casted: Vec<u16> = data.iter().map(|&x| x as u16).collect();
+                Buffer::from_u16(casted, device)
+            }
+            DType::Uint32 => {
+                let casted: Vec<u32> = data.iter().map(|&x| x as u32).collect();
+                Buffer::from_u32(casted, device)
+            }
+            DType::Uint64 => {
+                let casted: Vec<u64> = data.iter().map(|&x| x as u64).collect();
+                Buffer::from_u64(casted, device)
+            }
+            DType::Bool => {
+                let casted: Vec<bool> = data.iter().map(|&x| x != 0.0).collect();
+                Buffer::from_bool(casted, device)
+            }
+        };
+
+        let strides = shape.default_strides();
+        Self { buffer, shape, strides, offset: 0, id: next_array_id() }
     }
 
     /// Transfer array to a different device.
@@ -270,6 +441,26 @@ impl Array {
             .filter(|&&dim| dim != 1)
             .copied()
             .collect();
+
+        let new_shape = if new_dims.is_empty() {
+            Shape::scalar()
+        } else {
+            Shape::new(new_dims)
+        };
+
+        self.reshape(new_shape)
+    }
+
+    /// Remove a single dimension at the specified axis.
+    ///
+    /// The dimension at the given axis must be 1.
+    pub fn squeeze_axis(&self, axis: usize) -> Self {
+        let dims = self.shape.as_slice();
+        assert!(axis < dims.len(), "Axis {} out of bounds", axis);
+        assert_eq!(dims[axis], 1, "Can only squeeze axis with size 1");
+
+        let mut new_dims = dims.to_vec();
+        new_dims.remove(axis);
 
         let new_shape = if new_dims.is_empty() {
             Shape::scalar()
@@ -394,5 +585,89 @@ mod tests {
     fn test_array_reshape_size_mismatch() {
         let a = Array::zeros(Shape::new(vec![2, 3]), DType::Float32);
         let _b = a.reshape(Shape::new(vec![2, 2]));
+    }
+
+    #[test]
+    fn test_array_zeros_all_dtypes() {
+        // Test zeros with all dtypes
+        let dtypes = [
+            DType::Float32, DType::Float64, DType::Float16,
+            DType::Int8, DType::Int16, DType::Int32, DType::Int64,
+            DType::Uint8, DType::Uint16, DType::Uint32, DType::Uint64,
+            DType::Bool,
+        ];
+        for dtype in dtypes {
+            let a = Array::zeros(Shape::new(vec![2, 3]), dtype);
+            assert_eq!(a.dtype(), dtype);
+            assert_eq!(a.shape().as_slice(), &[2, 3]);
+            let data = a.to_vec();
+            assert!(data.iter().all(|&x| x == 0.0));
+        }
+    }
+
+    #[test]
+    fn test_array_ones_all_dtypes() {
+        let dtypes = [
+            DType::Float32, DType::Float64, DType::Float16,
+            DType::Int8, DType::Int16, DType::Int32, DType::Int64,
+            DType::Uint8, DType::Uint16, DType::Uint32, DType::Uint64,
+        ];
+        for dtype in dtypes {
+            let a = Array::ones(Shape::new(vec![3]), dtype);
+            assert_eq!(a.dtype(), dtype);
+            let data = a.to_vec();
+            assert!(data.iter().all(|&x| x == 1.0));
+        }
+    }
+
+    #[test]
+    fn test_array_from_vec_typed() {
+        // Test i32
+        let a = Array::from_vec_i32(vec![1, 2, 3], Shape::new(vec![3]));
+        assert_eq!(a.dtype(), DType::Int32);
+        assert_eq!(a.to_vec(), vec![1.0, 2.0, 3.0]);
+
+        // Test i8
+        let b = Array::from_vec_i8(vec![-1, 0, 127], Shape::new(vec![3]));
+        assert_eq!(b.dtype(), DType::Int8);
+        assert_eq!(b.to_vec(), vec![-1.0, 0.0, 127.0]);
+
+        // Test u8
+        let c = Array::from_vec_u8(vec![0, 128, 255], Shape::new(vec![3]));
+        assert_eq!(c.dtype(), DType::Uint8);
+        assert_eq!(c.to_vec(), vec![0.0, 128.0, 255.0]);
+
+        // Test bool
+        let d = Array::from_vec_bool(vec![true, false, true], Shape::new(vec![3]));
+        assert_eq!(d.dtype(), DType::Bool);
+        assert_eq!(d.to_vec(), vec![1.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn test_array_astype() {
+        let a = Array::from_vec(vec![1.0, 2.5, 3.9], Shape::new(vec![3]));
+
+        // Cast to Int32 (truncates)
+        let b = a.astype(DType::Int32);
+        assert_eq!(b.dtype(), DType::Int32);
+        assert_eq!(b.to_vec(), vec![1.0, 2.0, 3.0]);
+
+        // Cast to Bool
+        let c = Array::from_vec(vec![0.0, 1.0, 5.0], Shape::new(vec![3]));
+        let d = c.astype(DType::Bool);
+        assert_eq!(d.dtype(), DType::Bool);
+        assert_eq!(d.to_vec(), vec![0.0, 1.0, 1.0]);
+
+        // Cast same dtype returns clone
+        let e = a.astype(DType::Float32);
+        assert_eq!(e.dtype(), DType::Float32);
+        assert_eq!(e.to_vec(), a.to_vec());
+    }
+
+    #[test]
+    fn test_array_to_bool_vec() {
+        let a = Array::from_vec_bool(vec![true, false, true, false], Shape::new(vec![4]));
+        let data = a.to_bool_vec();
+        assert_eq!(data, vec![true, false, true, false]);
     }
 }

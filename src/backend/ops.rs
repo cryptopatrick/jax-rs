@@ -616,6 +616,712 @@ fn gpu_reduce_pass(
     ctx.queue.submit(Some(encoder.finish()));
 }
 
+/// Execute 2D convolution on GPU.
+///
+/// Performs batched 2D convolution with support for:
+/// - Multiple input/output channels
+/// - Configurable stride and padding
+/// - Batch processing
+///
+/// # Arguments
+///
+/// * `input` - Input buffer of shape [batch, in_channels, height, width]
+/// * `kernel` - Kernel buffer of shape [out_channels, in_channels, kernel_h, kernel_w]
+/// * `output` - Output buffer of shape [batch, out_channels, out_h, out_w]
+/// * `batch_size` - Number of samples in batch
+/// * `in_channels` - Number of input channels
+/// * `out_channels` - Number of output channels
+/// * `input_h` - Input height
+/// * `input_w` - Input width
+/// * `kernel_h` - Kernel height
+/// * `kernel_w` - Kernel width
+/// * `stride` - Stride (same for h and w)
+/// * `padding` - Padding (same for h and w)
+///
+/// # Panics
+///
+/// Panics if buffers are not on GPU or dimensions don't match.
+#[allow(clippy::too_many_arguments)]
+pub fn gpu_conv2d(
+    input: &Buffer,
+    kernel: &Buffer,
+    output: &Buffer,
+    batch_size: usize,
+    in_channels: usize,
+    out_channels: usize,
+    input_h: usize,
+    input_w: usize,
+    kernel_h: usize,
+    kernel_w: usize,
+    stride: usize,
+    padding: usize,
+) {
+    use wgpu::util::DeviceExt;
+
+    let ctx = WebGpuContext::get();
+
+    // Validate all buffers are on GPU
+    assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
+    assert_eq!(kernel.device(), crate::Device::WebGpu, "kernel must be on GPU");
+    assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
+
+    // Compute output dimensions
+    let output_h = (input_h + 2 * padding - kernel_h) / stride + 1;
+    let output_w = (input_w + 2 * padding - kernel_w) / stride + 1;
+
+    // Validate sizes
+    let expected_input_size = batch_size * in_channels * input_h * input_w;
+    let expected_kernel_size = out_channels * in_channels * kernel_h * kernel_w;
+    let expected_output_size = batch_size * out_channels * output_h * output_w;
+
+    assert_eq!(input.len(), expected_input_size, "input size mismatch");
+    assert_eq!(kernel.len(), expected_kernel_size, "kernel size mismatch");
+    assert_eq!(output.len(), expected_output_size, "output size mismatch");
+
+    // Get GPU buffers
+    let input_buf = input.as_gpu_buffer();
+    let kernel_buf = kernel.as_gpu_buffer();
+    let out_buf = output.as_gpu_buffer();
+
+    // Create params buffer (16 u32 values, padded to 64 bytes)
+    let params_data: [u32; 16] = [
+        batch_size as u32,
+        in_channels as u32,
+        out_channels as u32,
+        input_h as u32,
+        input_w as u32,
+        kernel_h as u32,
+        kernel_w as u32,
+        output_h as u32,
+        output_w as u32,
+        stride as u32,  // stride_h
+        stride as u32,  // stride_w
+        padding as u32, // padding_h
+        padding as u32, // padding_w
+        0, 0, 0,        // padding for alignment
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("conv2d_params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    // Create shader module
+    let shader_code = shaders::conv2d_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("conv2d_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+    });
+
+    // Create bind group layout
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("conv2d_bind_group_layout"),
+        entries: &[
+            // Input (read-only)
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Kernel (read-only)
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Output (read-write)
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Params (uniform)
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // Create pipeline
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("conv2d_pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("conv2d_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Create bind group
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("conv2d_bind_group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: kernel_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: out_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Dispatch with 3D workgroups: (out_w, out_h, out_channels * batch_size)
+    let workgroups_x = (output_w as u32 + 7) / 8;
+    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_z = (out_channels * batch_size) as u32;
+
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("conv2d_encoder"),
+    });
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("conv2d_pass"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
+/// Execute 2D max pooling on GPU.
+///
+/// # Arguments
+///
+/// * `input` - Input buffer of shape [batch, channels, height, width]
+/// * `output` - Output buffer of shape [batch, channels, out_h, out_w]
+/// * `batch_size` - Number of samples in batch
+/// * `channels` - Number of channels
+/// * `input_h` - Input height
+/// * `input_w` - Input width
+/// * `pool_h` - Pool window height
+/// * `pool_w` - Pool window width
+/// * `stride` - Stride (same for h and w)
+/// * `padding` - Padding (same for h and w)
+#[allow(clippy::too_many_arguments)]
+pub fn gpu_maxpool2d(
+    input: &Buffer,
+    output: &Buffer,
+    batch_size: usize,
+    channels: usize,
+    input_h: usize,
+    input_w: usize,
+    pool_h: usize,
+    pool_w: usize,
+    stride: usize,
+    padding: usize,
+) {
+    use wgpu::util::DeviceExt;
+
+    let ctx = WebGpuContext::get();
+
+    // Validate buffers
+    assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
+    assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
+
+    // Compute output dimensions
+    let output_h = (input_h + 2 * padding - pool_h) / stride + 1;
+    let output_w = (input_w + 2 * padding - pool_w) / stride + 1;
+
+    // Create params buffer
+    let params_data: [u32; 16] = [
+        batch_size as u32,
+        channels as u32,
+        input_h as u32,
+        input_w as u32,
+        output_h as u32,
+        output_w as u32,
+        pool_h as u32,
+        pool_w as u32,
+        stride as u32,
+        stride as u32,
+        padding as u32,
+        padding as u32,
+        0, 0, 0, 0, // padding
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("maxpool2d_params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    // Get GPU buffers
+    let input_buf = input.as_gpu_buffer();
+    let out_buf = output.as_gpu_buffer();
+
+    // Create shader module
+    let shader_code = shaders::maxpool2d_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("maxpool2d_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+    });
+
+    // Create bind group layout (3 bindings: input, output, params)
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("maxpool2d_bind_group_layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // Create pipeline
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("maxpool2d_pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("maxpool2d_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Create bind group
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("maxpool2d_bind_group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: out_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Dispatch
+    let workgroups_x = (output_w as u32 + 7) / 8;
+    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_z = (channels * batch_size) as u32;
+
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("maxpool2d_encoder"),
+    });
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("maxpool2d_pass"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
+/// Execute 2D average pooling on GPU.
+#[allow(clippy::too_many_arguments)]
+pub fn gpu_avgpool2d(
+    input: &Buffer,
+    output: &Buffer,
+    batch_size: usize,
+    channels: usize,
+    input_h: usize,
+    input_w: usize,
+    pool_h: usize,
+    pool_w: usize,
+    stride: usize,
+    padding: usize,
+) {
+    use wgpu::util::DeviceExt;
+
+    let ctx = WebGpuContext::get();
+
+    assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
+    assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
+
+    let output_h = (input_h + 2 * padding - pool_h) / stride + 1;
+    let output_w = (input_w + 2 * padding - pool_w) / stride + 1;
+
+    let params_data: [u32; 16] = [
+        batch_size as u32,
+        channels as u32,
+        input_h as u32,
+        input_w as u32,
+        output_h as u32,
+        output_w as u32,
+        pool_h as u32,
+        pool_w as u32,
+        stride as u32,
+        stride as u32,
+        padding as u32,
+        padding as u32,
+        0, 0, 0, 0,
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("avgpool2d_params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let input_buf = input.as_gpu_buffer();
+    let out_buf = output.as_gpu_buffer();
+
+    let shader_code = shaders::avgpool2d_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("avgpool2d_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+    });
+
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("avgpool2d_bind_group_layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("avgpool2d_pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("avgpool2d_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("avgpool2d_bind_group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: out_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    let workgroups_x = (output_w as u32 + 7) / 8;
+    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_z = (channels * batch_size) as u32;
+
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("avgpool2d_encoder"),
+    });
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("avgpool2d_pass"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups_x, workgroups_y, workgroups_z);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
+/// Execute batch normalization on GPU.
+///
+/// # Arguments
+///
+/// * `input` - Input buffer of shape [batch, channels, height, width]
+/// * `gamma` - Scale parameter of shape [channels]
+/// * `beta` - Shift parameter of shape [channels]
+/// * `output` - Output buffer of same shape as input
+/// * `batch_size` - Number of samples
+/// * `channels` - Number of channels
+/// * `spatial_size` - height * width
+/// * `epsilon` - Small constant for numerical stability
+#[allow(clippy::too_many_arguments)]
+pub fn gpu_batchnorm(
+    input: &Buffer,
+    gamma: &Buffer,
+    beta: &Buffer,
+    output: &Buffer,
+    batch_size: usize,
+    channels: usize,
+    spatial_size: usize,
+    epsilon: f32,
+) {
+    use wgpu::util::DeviceExt;
+
+    let ctx = WebGpuContext::get();
+
+    assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
+    assert_eq!(gamma.device(), crate::Device::WebGpu, "gamma must be on GPU");
+    assert_eq!(beta.device(), crate::Device::WebGpu, "beta must be on GPU");
+    assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
+
+    // Params: batch_size, channels, spatial_size, epsilon (as bits), padding
+    let params_data: [u32; 8] = [
+        batch_size as u32,
+        channels as u32,
+        spatial_size as u32,
+        epsilon.to_bits(),
+        0, 0, 0, 0,
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("batchnorm_params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    });
+
+    let input_buf = input.as_gpu_buffer();
+    let gamma_buf = gamma.as_gpu_buffer();
+    let beta_buf = beta.as_gpu_buffer();
+    let out_buf = output.as_gpu_buffer();
+
+    let shader_code = shaders::batchnorm_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("batchnorm_shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_code.into()),
+    });
+
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("batchnorm_bind_group_layout"),
+        entries: &[
+            // Input
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Gamma
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Beta
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Output
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            // Params
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("batchnorm_pipeline_layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("batchnorm_pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("batchnorm_bind_group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: input_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: gamma_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: beta_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: out_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // One workgroup per channel
+    let workgroups = channels as u32;
+
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("batchnorm_encoder"),
+    });
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("batchnorm_pass"),
+            timestamp_writes: None,
+        });
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
