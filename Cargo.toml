@@ -1,11 +1,11 @@
 [package]
 name = "jax-rs"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
 authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
 
 ###############################################################################
-description = "JAX in Rust - an ML library for the web, running on WebGPU & Wasm"
+description = "JAX in Rust - A complete machine learning framework with WebGPU acceleration."
 documentation = "https://docs.rs/jax-rs"
 homepage = "https://github.com/cryptopatrick/jax-rs"
 repository = "https://github.com/cryptopatrick/jax-rs"
