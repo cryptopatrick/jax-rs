@@ -2,10 +2,6 @@
 //!
 //! A machine learning framework for the web, running on WebGPU & Wasm.
 //!
-//! This crate ports the core functionality of [jax-js](https://jax-js.com) to Rust,
-//! providing NumPy/JAX-compatible array operations, automatic differentiation,
-//! vectorization, and JIT compilation.
-//!
 //! ## Key Features
 //!
 //! - **NumPy-compatible API**: Familiar array creation and manipulation

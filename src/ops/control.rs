@@ -267,7 +267,7 @@ where
     };
 
     // Extract individual elements
-    let mut elements: Vec<Array> = (0..n)
+    let elements: Vec<Array> = (0..n)
         .map(|i| {
             let start = i * x_size;
             let end = start + x_size;

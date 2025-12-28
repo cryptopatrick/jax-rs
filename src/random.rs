@@ -112,7 +112,7 @@ impl PRNGKey {
 /// let samples = uniform(key, Shape::new(vec![3, 2]), DType::Float32);
 /// assert_eq!(samples.shape().as_slice(), &[3, 2]);
 /// ```
-pub fn uniform(mut key: PRNGKey, shape: Shape, dtype: DType) -> Array {
+pub fn uniform(key: PRNGKey, shape: Shape, dtype: DType) -> Array {
     uniform_device(key, shape, dtype, Device::Cpu)
 }
 
@@ -219,7 +219,7 @@ pub fn randint(
 /// let key = PRNGKey::from_seed(42);
 /// let samples = normal(key, Shape::new(vec![100]), DType::Float32);
 /// ```
-pub fn normal(mut key: PRNGKey, shape: Shape, dtype: DType) -> Array {
+pub fn normal(key: PRNGKey, shape: Shape, dtype: DType) -> Array {
     normal_device(key, shape, dtype, Device::Cpu)
 }
 
@@ -241,7 +241,7 @@ pub fn normal_device(mut key: PRNGKey, shape: Shape, dtype: DType, device: Devic
         Device::WebGpu => {
             // GPU path using Philox + Box-Muller
             // Ensure even size for Box-Muller pairs
-            let actual_size = if size % 2 == 0 { size } else { size + 1 };
+            let actual_size = if size.is_multiple_of(2) { size } else { size + 1 };
             let output_buffer = Buffer::zeros(actual_size, dtype, Device::WebGpu);
             let seed = key.state;
             crate::backend::ops::gpu_normal(&output_buffer, actual_size, seed, 0);

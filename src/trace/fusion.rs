@@ -53,7 +53,7 @@ fn is_fusible(node: &IRNode) -> bool {
 }
 
 /// Get the WGSL function name for a primitive operation.
-fn wgsl_unary_fn(prim: &Primitive) -> &'static str {
+fn _wgsl_unary_fn(prim: &Primitive) -> &'static str {
     match prim {
         Primitive::Neg => "-",
         Primitive::Abs => "abs",
@@ -72,7 +72,7 @@ fn wgsl_unary_fn(prim: &Primitive) -> &'static str {
 }
 
 /// Get the WGSL operator for a binary primitive.
-fn wgsl_binary_op(prim: &Primitive) -> &'static str {
+fn _wgsl_binary_op(prim: &Primitive) -> &'static str {
     match prim {
         Primitive::Add => "+",
         Primitive::Sub => "-",

@@ -5,7 +5,7 @@
 //! - Adam (Adaptive Moment Estimation)
 //! - RMSProp (Root Mean Square Propagation)
 
-use crate::{Array, DType, Shape};
+use crate::{Array, Shape};
 
 /// SGD optimizer state containing momentum buffers.
 #[derive(Debug, Clone)]
@@ -42,7 +42,7 @@ pub struct SGDState {
 ///     &state
 /// );
 /// ```
-pub fn sgd_init(params: &Array) -> SGDState {
+pub fn sgd_init(_params: &Array) -> SGDState {
     SGDState {
         momentum: None,
         step: 0,
@@ -126,7 +126,7 @@ pub struct AdamState {
 ///     &state
 /// );
 /// ```
-pub fn adam_init(params: &Array) -> AdamState {
+pub fn adam_init(_params: &Array) -> AdamState {
     AdamState {
         m: None,
         v: None,
@@ -225,7 +225,7 @@ pub struct RMSPropState {
 ///     &state
 /// );
 /// ```
-pub fn rmsprop_init(params: &Array) -> RMSPropState {
+pub fn rmsprop_init(_params: &Array) -> RMSPropState {
     RMSPropState {
         square_avg: None,
         step: 0,

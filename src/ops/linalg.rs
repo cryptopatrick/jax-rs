@@ -89,7 +89,7 @@ impl Array {
         let new_shape = Shape::new(new_dims.clone());
 
         // Simple 2D case
-        if ndim == 2 && axes == &[1, 0] {
+        if ndim == 2 && axes == [1, 0] {
             return self.transpose();
         }
 
@@ -1165,7 +1165,7 @@ impl Array {
         // Power iteration to get eigenvectors of A^T A (right singular vectors V)
         let mut v_data: Vec<Vec<f32>> = Vec::with_capacity(k);
         let mut s_values: Vec<f32> = Vec::with_capacity(k);
-        let mut ata_data = ata.to_vec();
+        let ata_data = ata.to_vec();
 
         for _ in 0..k {
             // Initialize random vector

@@ -20,18 +20,26 @@ pub enum PrimalValue {
     /// Known value available for gradient computation
     Known(Array),
     /// Unknown value (gradient flows through)
-    Unknown { shape: Shape, dtype: DType },
+    Unknown {
+        /// Shape of the unknown value
+        shape: Shape,
+        /// Data type of the unknown value
+        dtype: DType
+    },
 }
 
 impl PrimalValue {
+    /// Create a known primal value from an array
     pub fn known(arr: Array) -> Self {
         PrimalValue::Known(arr)
     }
 
+    /// Create an unknown primal value with shape and dtype
     pub fn unknown(shape: Shape, dtype: DType) -> Self {
         PrimalValue::Unknown { shape, dtype }
     }
 
+    /// Get the shape of the primal value
     pub fn shape(&self) -> &Shape {
         match self {
             PrimalValue::Known(arr) => arr.shape(),
@@ -39,6 +47,7 @@ impl PrimalValue {
         }
     }
 
+    /// Get the data type of the primal value
     pub fn dtype(&self) -> DType {
         match self {
             PrimalValue::Known(arr) => arr.dtype(),
@@ -46,10 +55,12 @@ impl PrimalValue {
         }
     }
 
+    /// Check if this is a known primal value
     pub fn is_known(&self) -> bool {
         matches!(self, PrimalValue::Known(_))
     }
 
+    /// Unwrap the known primal value, panics if unknown
     pub fn unwrap(self) -> Array {
         match self {
             PrimalValue::Known(arr) => arr,
@@ -57,6 +68,7 @@ impl PrimalValue {
         }
     }
 
+    /// Get a reference to the known primal value, returns None if unknown
     pub fn as_ref(&self) -> Option<&Array> {
         match self {
             PrimalValue::Known(arr) => Some(arr),
@@ -344,9 +356,9 @@ pub fn transpose_pow(
             (PrimalValue::Known(y), PrimalValue::Unknown { shape, .. }) => {
                 // d/dx = y * x^(y-1) = y * x^y / x
                 // If we have output (x^y), use it
-                if let (Some(pow_xy), PrimalValue::Known(_)) = (output, lhs) {
+                if let (Some(_pow_xy), PrimalValue::Known(_)) = (output, lhs) {
                     // Can't use this path since lhs is Unknown
-                    let one = Array::ones(y.shape().clone(), y.dtype());
+                    let _one = Array::ones(y.shape().clone(), y.dtype());
                     let grad = y.clone(); // Simplified
                     Some(unbroadcast(&cotangent.mul(&grad), shape))
                 } else {

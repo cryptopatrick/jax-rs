@@ -2,7 +2,7 @@
 //!
 //! Operations for reshaping, concatenating, and manipulating arrays.
 
-use crate::{buffer::Buffer, Array, DType, Device, Shape};
+use crate::{Array, DType, Shape};
 
 impl Array {
     /// Concatenate arrays along an existing axis.
@@ -475,8 +475,8 @@ impl Array {
         // For 2D case
         if self.ndim() == 2 {
             let (h, w) = (shape[0], shape[1]);
-            let (h_before, h_after) = pad_width[0];
-            let (w_before, w_after) = pad_width[1];
+            let (h_before, _) = pad_width[0];
+            let (w_before, _) = pad_width[1];
 
             let out_h = out_shape[0];
             let out_w = out_shape[1];
@@ -1609,7 +1609,7 @@ impl Array {
         let data = self.to_vec();
 
         // Normalize k to be within [0, 4)
-        let k = ((k % 4) + 4) % 4;
+        let k = k.rem_euclid(4);
 
         match k {
             0 => self.clone(),
@@ -2140,7 +2140,7 @@ impl Array {
     /// ```
     pub fn hsplit(&self, num_sections: usize) -> Vec<Array> {
         let shape = self.shape().as_slice();
-        assert!(shape.len() >= 1, "hsplit requires at least 1D array");
+        assert!(!shape.is_empty(), "hsplit requires at least 1D array");
 
         if shape.len() == 1 {
             // For 1D arrays, split along axis 0
@@ -2927,7 +2927,7 @@ impl Array {
         let new_shape: Vec<usize> = axes.iter().map(|&a| shape[a]).collect();
 
         // For 2D transpose
-        if shape.len() == 2 && axes == &[1, 0] {
+        if shape.len() == 2 && axes == [1, 0] {
             return self.transpose();
         }
 

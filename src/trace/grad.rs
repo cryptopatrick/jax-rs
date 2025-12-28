@@ -7,7 +7,7 @@
 
 use crate::trace::transpose_rules::{self, PrimalValue};
 use crate::trace::{IRGraph, IRNode, Primitive};
-use crate::{Array, DType, Shape};
+use crate::{Array, Shape};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -322,6 +322,7 @@ fn eval_reduce_op(op: &Primitive, input: &Array) -> Array {
 }
 
 /// Debug helper to print IR node structure.
+#[allow(dead_code)]
 fn print_ir_node(node: &Arc<IRNode>, depth: usize) -> String {
     let indent = "  ".repeat(depth);
     match node.as_ref() {
@@ -599,7 +600,7 @@ impl VJPEngine {
                 let rhs_is_input = matches!(rhs.as_ref(), IRNode::Input { .. });
                 let same_node = Arc::ptr_eq(lhs, rhs);
 
-                let mut lhs_primal = if lhs_is_input && !same_node {
+                let lhs_primal = if lhs_is_input && !same_node {
                     // Different input node - treat as Unknown
                     self.get_primal(lhs)
                 } else if lhs_is_input && same_node {
@@ -627,7 +628,7 @@ impl VJPEngine {
                 // We need actual primal values to compute gradients
                 if matches!(op, Primitive::Mul) && !lhs_primal.is_known() && !rhs_primal.is_known() {
                     // Fetch actual primal values for both operands
-                    let lhs_addr = Arc::as_ptr(lhs) as usize;
+                    let _lhs_addr = Arc::as_ptr(lhs) as usize;
                     let rhs_addr = Arc::as_ptr(rhs) as usize;
 
                     // Make one Known so transpose_mul can work

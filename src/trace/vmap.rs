@@ -42,7 +42,7 @@ where
         let inputs = split_along_axis(x, in_axis, batch_size);
 
         // Apply function to each batch element
-        let outputs: Vec<Array> = inputs.iter().map(|inp| f(inp)).collect();
+        let outputs: Vec<Array> = inputs.iter().map(&f).collect();
 
         // Stack results along the batch axis
         stack_along_axis(&outputs, in_axis)
@@ -187,7 +187,7 @@ impl VmapConfig {
             let batch_size = x.shape().as_slice()[self.in_axis];
             let inputs = split_along_axis(x, self.in_axis, batch_size);
             let outputs: Vec<Array> =
-                inputs.iter().map(|inp| f(inp)).collect();
+                inputs.iter().map(&f).collect();
 
             if self.out_axis == 0 {
                 stack_along_axis(&outputs, self.out_axis)

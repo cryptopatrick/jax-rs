@@ -141,7 +141,7 @@ pub fn gpu_binary_op(
         cpass.set_pipeline(&pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
 
-        let workgroups = (output.len() as u32 + 255) / 256;
+        let workgroups = (output.len() as u32).div_ceil(256);
         cpass.dispatch_workgroups(workgroups, 1, 1);
     }
 
@@ -259,7 +259,7 @@ pub fn gpu_unary_op(
         cpass.set_pipeline(&pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
 
-        let workgroups = (output.len() as u32 + 255) / 256;
+        let workgroups = (output.len() as u32).div_ceil(256);
         cpass.dispatch_workgroups(workgroups, 1, 1);
     }
 
@@ -429,7 +429,7 @@ pub fn gpu_fused_execute(
         cpass.set_pipeline(&pipeline);
         cpass.set_bind_group(0, &bind_group, &[]);
 
-        let workgroups = (size + 255) / 256;
+        let workgroups = size.div_ceil(256);
         cpass.dispatch_workgroups(workgroups, 1, 1);
     }
 
@@ -598,8 +598,8 @@ pub fn gpu_matmul(
     });
 
     // Dispatch with 2D workgroups (16x16 tiles)
-    let workgroups_x = ((n as u32) + 15) / 16;
-    let workgroups_y = ((m as u32) + 15) / 16;
+    let workgroups_x = (n as u32).div_ceil(16);
+    let workgroups_y = (m as u32).div_ceil(16);
 
     let mut encoder = ctx
         .device
@@ -641,9 +641,9 @@ pub fn gpu_reduce_all(
     output: &Buffer,
     op: &str,
 ) {
-    use wgpu::util::DeviceExt;
 
-    let ctx = WebGpuContext::get();
+
+    let _ctx = WebGpuContext::get();
 
     // Validate buffers are on GPU
     assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
@@ -659,7 +659,7 @@ pub fn gpu_reduce_all(
     }
 
     // Two-pass reduction for large arrays
-    let num_workgroups = (n + 255) / 256;
+    let num_workgroups = n.div_ceil(256);
 
     // Create intermediate buffer for workgroup results
     let intermediate = Buffer::zeros(num_workgroups, input.dtype(), crate::Device::WebGpu);
@@ -765,7 +765,7 @@ fn gpu_reduce_pass(
     });
 
     // Dispatch
-    let workgroups = (n as u32 + 255) / 256;
+    let workgroups = (n as u32).div_ceil(256);
 
     let mut encoder = ctx
         .device
@@ -976,8 +976,8 @@ pub fn gpu_conv2d(
     });
 
     // Dispatch with 3D workgroups: (out_w, out_h, out_channels * batch_size)
-    let workgroups_x = (output_w as u32 + 7) / 8;
-    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_x = (output_w as u32).div_ceil(8);
+    let workgroups_y = (output_h as u32).div_ceil(8);
     let workgroups_z = (out_channels * batch_size) as u32;
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1167,7 +1167,7 @@ pub fn gpu_conv1d(
 
     // Dispatch with 1D workgroups
     let total_elements = batch_size * out_channels * output_len;
-    let workgroups = (total_elements as u32 + 255) / 256;
+    let workgroups = (total_elements as u32).div_ceil(256);
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("conv1d_encoder"),
@@ -1333,8 +1333,8 @@ pub fn gpu_maxpool2d(
     });
 
     // Dispatch
-    let workgroups_x = (output_w as u32 + 7) / 8;
-    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_x = (output_w as u32).div_ceil(8);
+    let workgroups_y = (output_h as u32).div_ceil(8);
     let workgroups_z = (channels * batch_size) as u32;
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1479,8 +1479,8 @@ pub fn gpu_avgpool2d(
         ],
     });
 
-    let workgroups_x = (output_w as u32 + 7) / 8;
-    let workgroups_y = (output_h as u32 + 7) / 8;
+    let workgroups_x = (output_w as u32).div_ceil(8);
+    let workgroups_y = (output_h as u32).div_ceil(8);
     let workgroups_z = (channels * batch_size) as u32;
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -1698,9 +1698,9 @@ pub fn gpu_fft(
     n: usize,
     inverse: bool,
 ) {
-    use wgpu::util::DeviceExt;
 
-    let ctx = WebGpuContext::get();
+
+    let _ctx = WebGpuContext::get();
 
     assert_eq!(input.device(), crate::Device::WebGpu, "input must be on GPU");
     assert_eq!(output.device(), crate::Device::WebGpu, "output must be on GPU");
@@ -1882,7 +1882,7 @@ pub fn gpu_fft_complex(
         });
 
         // Dispatch
-        let workgroups = (n as u32 + 255) / 256;
+        let workgroups = (n as u32).div_ceil(256);
 
         let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("fft_encoder"),
@@ -2015,7 +2015,7 @@ pub fn gpu_uniform(
     });
 
     // Dispatch
-    let workgroups = (n as u32 + 255) / 256;
+    let workgroups = (n as u32).div_ceil(256);
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("philox_encoder"),
@@ -2156,7 +2156,7 @@ pub fn gpu_normal(
     });
 
     // Dispatch - each thread handles 2 elements
-    let workgroups = ((n / 2) as u32 + 255) / 256;
+    let workgroups = ((n / 2) as u32).div_ceil(256);
 
     let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("box_muller_encoder"),
@@ -2288,7 +2288,7 @@ pub fn gpu_logistic(
         label: Some("logistic encoder"),
     });
 
-    let workgroups = (n as u32 + 255) / 256;
+    let workgroups = (n as u32).div_ceil(256);
 
     {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -2414,7 +2414,7 @@ pub fn gpu_exponential(
         label: Some("exponential encoder"),
     });
 
-    let workgroups = (n as u32 + 255) / 256;
+    let workgroups = (n as u32).div_ceil(256);
 
     {
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {

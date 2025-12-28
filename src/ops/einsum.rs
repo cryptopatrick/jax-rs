@@ -245,12 +245,11 @@ fn einsum_chain(arrays: &[&Array], inputs: &[Vec<char>], output: &[char]) -> Arr
             }
 
             // Apply permutation if not identity
-            if !perm.iter().enumerate().all(|(i, &p)| i == p) {
-                if perm.len() == 2 && perm == vec![1, 0] {
+            if !perm.iter().enumerate().all(|(i, &p)| i == p)
+                && perm.len() == 2 && perm == vec![1, 0] {
                     result = result.transpose();
                 }
                 // For higher dimensions, would need transpose_axes
-            }
         }
     }
 
@@ -297,11 +296,10 @@ fn einsum_single(subscripts: &str, a: &Array, input: &[char], output: &[char]) -
     }
 
     // Special case: transpose (ij->ji)
-    if a_shape.len() == 2 && input.len() == 2 && output.len() == 2 {
-        if input[0] == output[1] && input[1] == output[0] {
+    if a_shape.len() == 2 && input.len() == 2 && output.len() == 2
+        && input[0] == output[1] && input[1] == output[0] {
             return a.transpose();
         }
-    }
 
     // Sum reduction (e.g., "ij->" - sum all elements)
     if output.is_empty() {
@@ -450,15 +448,14 @@ fn einsum_binary(
     let input_b = &inputs[1];
 
     // Special case: matrix multiplication (ij,jk->ik)
-    if input_a.len() == 2 && input_b.len() == 2 && output.len() == 2 {
-        if input_a[1] == input_b[0] && // j is shared
+    if input_a.len() == 2 && input_b.len() == 2 && output.len() == 2
+        && input_a[1] == input_b[0] && // j is shared
            input_a[0] == output[0] &&  // i preserved
            input_b[1] == output[1] &&  // k preserved
            sum_indices.contains(&input_a[1]) // j is summed
         {
             return a.matmul(b);
         }
-    }
 
     // Special case: outer product (i,j->ij)
     if input_a.len() == 1 && input_b.len() == 1 && output.len() == 2 && sum_indices.is_empty() {
@@ -577,7 +574,7 @@ fn einsum_binary(
         let mut rem = out_flat;
         for (pos, &c) in output.iter().enumerate() {
             let stride = if pos < out_strides.len() { out_strides[pos] } else { 1 };
-            let dim = *index_dims.get(&c).unwrap();
+            let _dim = *index_dims.get(&c).unwrap();
             out_idx.insert(c, rem / stride);
             rem %= stride;
         }

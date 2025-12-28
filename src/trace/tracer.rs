@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 thread_local! {
     /// Global tracing context (thread-local).
-    static TRACE_CONTEXT: RefCell<Option<Rc<RefCell<TraceContext>>>> = RefCell::new(None);
+    static TRACE_CONTEXT: RefCell<Option<Rc<RefCell<TraceContext>>>> = const { RefCell::new(None) };
 }
 
 /// Context for tracing operations.
@@ -25,7 +25,7 @@ pub struct TraceContext {
     /// Input nodes for this trace
     inputs: Vec<Arc<IRNode>>,
     /// Counter for generating unique IDs
-    next_id: usize,
+    _next_id: usize,
     /// Name of the function being traced
     name: String,
 }
@@ -33,13 +33,13 @@ pub struct TraceContext {
 impl TraceContext {
     /// Create a new trace context.
     pub fn new(name: String) -> Self {
-        Self { nodes: HashMap::new(), inputs: Vec::new(), next_id: 0, name }
+        Self { nodes: HashMap::new(), inputs: Vec::new(), _next_id: 0, name }
     }
 
     /// Generate a unique ID for a traced value.
-    fn next_id(&mut self) -> usize {
-        let id = self.next_id;
-        self.next_id += 1;
+    fn _next_id(&mut self) -> usize {
+        let id = self._next_id;
+        self._next_id += 1;
         id
     }
 

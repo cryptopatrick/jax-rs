@@ -453,7 +453,7 @@ impl Array {
         data.sort_by(|a, b| a.partial_cmp(b).unwrap());
 
         let len = data.len();
-        if len % 2 == 0 {
+        if len.is_multiple_of(2) {
             (data[len / 2 - 1] + data[len / 2]) / 2.0
         } else {
             data[len / 2]
@@ -475,7 +475,7 @@ impl Array {
     /// assert_eq!(p50, 3.0);
     /// ```
     pub fn percentile(&self, q: f32) -> f32 {
-        assert!(q >= 0.0 && q <= 100.0, "Percentile must be between 0 and 100");
+        assert!((0.0..=100.0).contains(&q), "Percentile must be between 0 and 100");
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
 
         let mut data = self.to_vec();
@@ -617,7 +617,7 @@ impl Array {
     pub fn diff(&self) -> Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
         let data = self.to_vec();
-        assert!(data.len() > 0, "Array must have at least 1 element");
+        assert!(!data.is_empty(), "Array must have at least 1 element");
 
         if data.len() == 1 {
             return Array::from_vec(vec![], Shape::new(vec![0]));
@@ -798,7 +798,7 @@ impl Array {
         valid.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let len = valid.len();
 
-        if len % 2 == 0 {
+        if len.is_multiple_of(2) {
             (valid[len / 2 - 1] + valid[len / 2]) / 2.0
         } else {
             valid[len / 2]
@@ -852,7 +852,7 @@ impl Array {
     /// ```
     pub fn quantile(&self, q: f32) -> f32 {
         assert!(
-            q >= 0.0 && q <= 1.0,
+            (0.0..=1.0).contains(&q),
             "Quantile must be between 0 and 1"
         );
 
@@ -888,7 +888,7 @@ impl Array {
     /// ```
     pub fn quantile_axis(&self, q: f32, axis: usize) -> Array {
         assert!(
-            q >= 0.0 && q <= 1.0,
+            (0.0..=1.0).contains(&q),
             "Quantile must be between 0 and 1"
         );
         assert!(axis < self.ndim(), "Axis out of bounds");
@@ -1094,7 +1094,7 @@ impl Array {
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
         let data = self.to_vec();
 
-        if data.len() == 0 {
+        if data.is_empty() {
             return Array::zeros(Shape::new(vec![0]), DType::Float32);
         }
 
@@ -1457,7 +1457,7 @@ impl Array {
     /// assert!((p - 4.0).abs() < 1e-6);  // median of [1, 3, 5, 7] = 4
     /// ```
     pub fn nanpercentile(&self, q: f32) -> f32 {
-        assert!(q >= 0.0 && q <= 100.0, "Percentile must be in [0, 100]");
+        assert!((0.0..=100.0).contains(&q), "Percentile must be in [0, 100]");
         assert_eq!(self.dtype(), DType::Float32, "Only Float32 supported");
 
         let mut data: Vec<f32> = self.to_vec().into_iter().filter(|x| !x.is_nan()).collect();
@@ -1491,7 +1491,7 @@ impl Array {
     /// assert!((q - 4.0).abs() < 1e-6);  // median of [1, 3, 5, 7] = 4
     /// ```
     pub fn nanquantile(&self, q: f32) -> f32 {
-        assert!(q >= 0.0 && q <= 1.0, "Quantile must be in [0, 1]");
+        assert!((0.0..=1.0).contains(&q), "Quantile must be in [0, 1]");
         self.nanpercentile(q * 100.0)
     }
 }

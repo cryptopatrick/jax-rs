@@ -73,7 +73,7 @@ where
             let mut cache = self.cache.lock().unwrap();
 
             // Build placeholder graph (full tracing comes later)
-            let mut graph = crate::trace::IRGraph::new(
+            let graph = crate::trace::IRGraph::new(
                 self.name.clone(),
                 vec![],
                 vec![],
