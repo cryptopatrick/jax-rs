@@ -1,0 +1,22 @@
+# Folders
+target/
+_docs-vibe/
+_wb/
+_dev/
+
+# Files
+.DS_Store
+Cargo.lock
+
+# Agentic
+.claude
+claude.md
+CLAUDE.md
+AGENT.md
+JUNIOR.md
+PARITY.md
+NOTES.md
+FUNCTION_TRACKING.md
+GAP_ANALYSIS.md
+PARITY_SUMMARY.md
+REMAIN.md

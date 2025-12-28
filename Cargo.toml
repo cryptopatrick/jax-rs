@@ -1,0 +1,60 @@
+[package]
+name = "jax-rs"
+version = "0.1.0"
+edition = "2021"
+authors = ["CryptoPatrick <cryptopatrick@gmail.com>"]
+
+###############################################################################
+description = "JAX in Rust - an ML library for the web, running on WebGPU & Wasm"
+documentation = "https://docs.rs/jax-rs"
+homepage = "https://github.com/cryptopatrick/jax-rs"
+repository = "https://github.com/cryptopatrick/jax-rs"
+readme = "README.md"
+keywords = ["ml"]
+license = "MIT"
+autotests = false
+
+###############################################################################
+[lib]
+#name = "jax-rs"
+path = "src/lib.rs"
+
+[[test]]
+name = "tests"
+path = "tests/test.rs"
+
+[[test]]
+name = "gpu_tests"
+path = "tests/gpu_tests.rs"
+required-features = ["webgpu"]
+
+###############################################################################
+[features]
+default = ["webgpu"]
+webgpu = []
+
+[dependencies]
+wgpu = { version = "22", features = ["wgsl"] }
+pollster = "0.4"
+bytemuck = { version = "1.19", features = ["derive"] }
+futures = "0.3"
+thiserror = "2.0"
+log = "0.4"
+
+[dev-dependencies]
+approx = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.6"
+env_logger = "0.11"
+
+[[bench]]
+name = "benchmarks"
+harness = false
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
