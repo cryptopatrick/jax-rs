@@ -428,7 +428,7 @@ pub fn shuffle(key: PRNGKey, x: &Array) -> Array {
     permutation(key, x)
 }
 
-/// Generate random samples from an exponential distribution.
+/// Generate random samples from an exponential distribution (CPU version).
 ///
 /// The exponential distribution has PDF: f(x) = λ * exp(-λ * x) for x >= 0.
 ///
@@ -440,23 +440,165 @@ pub fn shuffle(key: PRNGKey, x: &Array) -> Array {
 /// let samples = exponential(key, 1.0, Shape::new(vec![100]), DType::Float32);
 /// ```
 pub fn exponential(
+    key: PRNGKey,
+    rate: f32,
+    shape: Shape,
+    dtype: DType,
+) -> Array {
+    exponential_device(key, rate, shape, dtype, Device::Cpu)
+}
+
+/// Generate random samples from an exponential distribution with device support.
+///
+/// The exponential distribution has PDF: f(x) = λ * exp(-λ * x) for x >= 0.
+/// Uses inverse transform sampling: X = -ln(U) / λ
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, exponential_device}, Shape, DType, Device};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = exponential_device(key, 1.0, Shape::new(vec![100]), DType::Float32, Device::Cpu);
+/// ```
+pub fn exponential_device(
     mut key: PRNGKey,
     rate: f32,
     shape: Shape,
     dtype: DType,
+    device: Device,
 ) -> Array {
     assert_eq!(dtype, DType::Float32, "Only Float32 supported");
     assert!(rate > 0.0, "Rate must be positive");
 
     let size = shape.size();
-    let mut data = Vec::with_capacity(size);
 
-    for _ in 0..size {
-        let u = key.next_f32().max(1e-10); // Avoid log(0)
-        data.push(-u.ln() / rate);
+    match device {
+        Device::WebGpu => {
+            let output_buffer = Buffer::zeros(size, dtype, Device::WebGpu);
+            let seed = key.state;
+            crate::backend::ops::gpu_exponential(&output_buffer, size, seed, 0, rate);
+            Array::from_buffer(output_buffer, shape)
+        }
+        Device::Cpu | Device::Wasm => {
+            let mut data = Vec::with_capacity(size);
+            for _ in 0..size {
+                let u = key.next_f32().max(1e-10); // Avoid log(0)
+                data.push(-u.ln() / rate);
+            }
+            Array::from_vec(data, shape)
+        }
     }
+}
 
-    Array::from_vec(data, shape)
+/// Generate random samples from a logistic distribution (CPU version).
+///
+/// The logistic distribution has PDF: f(x) = exp(-(x-μ)/s) / (s * (1 + exp(-(x-μ)/s))^2)
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, logistic}, Shape, DType};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = logistic(key, Shape::new(vec![100]), DType::Float32);
+/// ```
+pub fn logistic(key: PRNGKey, shape: Shape, dtype: DType) -> Array {
+    logistic_device(key, shape, dtype, Device::Cpu)
+}
+
+/// Generate random samples from a logistic distribution with device selection.
+///
+/// Uses inverse transform sampling: X = μ + s * log(U / (1 - U))
+/// where U ~ Uniform(0, 1), μ = location (default 0), s = scale (default 1).
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, logistic_device}, Shape, DType, Device};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = logistic_device(key, Shape::new(vec![100]), DType::Float32, Device::Cpu);
+/// ```
+pub fn logistic_device(
+    mut key: PRNGKey,
+    shape: Shape,
+    dtype: DType,
+    device: Device,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+
+    let size = shape.size();
+
+    match device {
+        Device::WebGpu => {
+            let output_buffer = Buffer::zeros(size, dtype, Device::WebGpu);
+            let seed = key.state;
+            crate::backend::ops::gpu_logistic(&output_buffer, size, seed, 0, 0.0, 1.0);
+            Array::from_buffer(output_buffer, shape)
+        }
+        Device::Cpu | Device::Wasm => {
+            // CPU implementation using inverse transform
+            let mut data = Vec::with_capacity(size);
+
+            for _ in 0..size {
+                let u = key.next_f32().clamp(1e-10, 1.0 - 1e-10); // Avoid division by zero
+                let x = (u / (1.0 - u)).ln();
+                data.push(x);
+            }
+
+            Array::from_vec(data, shape)
+        }
+    }
+}
+
+/// Generate random samples from a logistic distribution with custom parameters.
+///
+/// # Arguments
+///
+/// * `key` - PRNG key
+/// * `loc` - Location parameter (μ)
+/// * `scale` - Scale parameter (s), must be positive
+/// * `shape` - Output shape
+/// * `dtype` - Data type
+/// * `device` - Compute device
+///
+/// # Examples
+///
+/// ```
+/// # use jax_rs::{random::{PRNGKey, logistic_with_params}, Shape, DType, Device};
+/// let key = PRNGKey::from_seed(42);
+/// let samples = logistic_with_params(key, 2.0, 0.5, Shape::new(vec![100]), DType::Float32, Device::Cpu);
+/// ```
+pub fn logistic_with_params(
+    mut key: PRNGKey,
+    loc: f32,
+    scale: f32,
+    shape: Shape,
+    dtype: DType,
+    device: Device,
+) -> Array {
+    assert_eq!(dtype, DType::Float32, "Only Float32 supported");
+    assert!(scale > 0.0, "Scale must be positive");
+
+    let size = shape.size();
+
+    match device {
+        Device::WebGpu => {
+            let output_buffer = Buffer::zeros(size, dtype, Device::WebGpu);
+            let seed = key.state;
+            crate::backend::ops::gpu_logistic(&output_buffer, size, seed, 0, loc, scale);
+            Array::from_buffer(output_buffer, shape)
+        }
+        Device::Cpu | Device::Wasm => {
+            let mut data = Vec::with_capacity(size);
+
+            for _ in 0..size {
+                let u = key.next_f32().clamp(1e-10, 1.0 - 1e-10);
+                let x = loc + scale * (u / (1.0 - u)).ln();
+                data.push(x);
+            }
+
+            Array::from_vec(data, shape)
+        }
+    }
 }
 
 /// Generate random samples from a gamma distribution.

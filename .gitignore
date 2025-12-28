@@ -7,6 +7,7 @@ _dev/
 # Files
 .DS_Store
 Cargo.lock
+hello.txt
 
 # Agentic
 .claude

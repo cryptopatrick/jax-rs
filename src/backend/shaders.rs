@@ -951,6 +951,194 @@ fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
 "#.to_string()
 }
 
+/// Generate WGSL code for logistic distribution sampling.
+///
+/// Uses inverse transform sampling: X = loc + scale * log(U / (1 - U))
+/// where U comes from Philox PRNG.
+pub fn logistic_shader() -> String {
+    r#"struct LogisticParams {
+    seed0: u32,
+    seed1: u32,
+    offset: u32,
+    n: u32,
+    loc: f32,
+    scale: f32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> output: array<f32>;
+
+@group(0) @binding(1)
+var<uniform> params: LogisticParams;
+
+// Philox constants
+const PHILOX_M0: u32 = 0xD2511F53u;
+const PHILOX_M1: u32 = 0xCD9E8D57u;
+
+// 32x32 -> 64 bit multiply using u32 operations
+fn mulhilo(a: u32, b: u32) -> vec2<u32> {
+    let a_lo = a & 0xFFFFu;
+    let a_hi = a >> 16u;
+    let b_lo = b & 0xFFFFu;
+    let b_hi = b >> 16u;
+
+    let p0 = a_lo * b_lo;
+    let p1 = a_lo * b_hi;
+    let p2 = a_hi * b_lo;
+    let p3 = a_hi * b_hi;
+
+    let carry = ((p0 >> 16u) + (p1 & 0xFFFFu) + (p2 & 0xFFFFu)) >> 16u;
+    let lo = p0;
+    let hi = p3 + (p1 >> 16u) + (p2 >> 16u) + carry;
+
+    return vec2<u32>(hi, lo);
+}
+
+fn philox_round(counter: vec2<u32>, key: vec2<u32>) -> vec2<u32> {
+    let mul0 = mulhilo(counter.x, PHILOX_M0);
+    let mul1 = mulhilo(counter.y, PHILOX_M1);
+
+    let hi0 = mul0.x;
+    let lo0 = mul0.y;
+    let hi1 = mul1.x;
+    let lo1 = mul1.y;
+
+    return vec2<u32>(hi1 ^ key.x ^ lo0, hi0 ^ key.y ^ lo1);
+}
+
+fn philox(counter: vec2<u32>, key: vec2<u32>) -> vec2<u32> {
+    var ctr = counter;
+    var k = key;
+
+    for (var i = 0u; i < 10u; i = i + 1u) {
+        ctr = philox_round(ctr, k);
+        k = vec2<u32>(k.x + 0x9E3779B9u, k.y + 0xBB67AE85u);
+    }
+
+    return ctr;
+}
+
+fn u32_to_f32(x: u32) -> f32 {
+    return f32(x >> 8u) / f32(0x1000000u);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let idx = global_id.x;
+
+    if (idx >= params.n) {
+        return;
+    }
+
+    let counter = vec2<u32>(idx + params.offset, 0u);
+    let key = vec2<u32>(params.seed0, params.seed1);
+
+    let result = philox(counter, key);
+    var u = u32_to_f32(result.x);
+
+    // Clamp to avoid division by zero and log(0)
+    u = clamp(u, 1e-10, 1.0 - 1e-10);
+
+    // Inverse transform: X = loc + scale * log(U / (1 - U))
+    let logit = log(u / (1.0 - u));
+    output[idx] = params.loc + params.scale * logit;
+}
+"#.to_string()
+}
+
+/// Generate WGSL code for exponential distribution sampling.
+///
+/// Uses inverse transform sampling: X = -ln(U) / rate
+/// where U comes from Philox PRNG.
+pub fn exponential_shader() -> String {
+    r#"struct ExponentialParams {
+    seed0: u32,
+    seed1: u32,
+    offset: u32,
+    n: u32,
+    rate: f32,
+}
+
+@group(0) @binding(0)
+var<storage, read_write> output: array<f32>;
+
+@group(0) @binding(1)
+var<uniform> params: ExponentialParams;
+
+// Philox constants
+const PHILOX_M0: u32 = 0xD2511F53u;
+const PHILOX_M1: u32 = 0xCD9E8D57u;
+
+// 32x32 -> 64 bit multiply using u32 operations
+fn mulhilo(a: u32, b: u32) -> vec2<u32> {
+    let a_lo = a & 0xFFFFu;
+    let a_hi = a >> 16u;
+    let b_lo = b & 0xFFFFu;
+    let b_hi = b >> 16u;
+
+    let p0 = a_lo * b_lo;
+    let p1 = a_lo * b_hi;
+    let p2 = a_hi * b_lo;
+    let p3 = a_hi * b_hi;
+
+    let carry = ((p0 >> 16u) + (p1 & 0xFFFFu) + (p2 & 0xFFFFu)) >> 16u;
+    let lo = p0;
+    let hi = p3 + (p1 >> 16u) + (p2 >> 16u) + carry;
+
+    return vec2<u32>(hi, lo);
+}
+
+fn philox_round(counter: vec2<u32>, key: vec2<u32>) -> vec2<u32> {
+    let mul0 = mulhilo(counter.x, PHILOX_M0);
+    let mul1 = mulhilo(counter.y, PHILOX_M1);
+
+    let hi0 = mul0.x;
+    let lo0 = mul0.y;
+    let hi1 = mul1.x;
+    let lo1 = mul1.y;
+
+    return vec2<u32>(hi1 ^ key.x ^ lo0, hi0 ^ key.y ^ lo1);
+}
+
+fn philox(counter: vec2<u32>, key: vec2<u32>) -> vec2<u32> {
+    var ctr = counter;
+    var k = key;
+
+    for (var i = 0u; i < 10u; i = i + 1u) {
+        ctr = philox_round(ctr, k);
+        k = vec2<u32>(k.x + 0x9E3779B9u, k.y + 0xBB67AE85u);
+    }
+
+    return ctr;
+}
+
+fn u32_to_f32(x: u32) -> f32 {
+    return f32(x >> 8u) / f32(0x1000000u);
+}
+
+@compute @workgroup_size(256)
+fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
+    let idx = global_id.x;
+
+    if (idx >= params.n) {
+        return;
+    }
+
+    let counter = vec2<u32>(idx + params.offset, 0u);
+    let key = vec2<u32>(params.seed0, params.seed1);
+
+    let result = philox(counter, key);
+    var u = u32_to_f32(result.x);
+
+    // Clamp to avoid log(0)
+    u = max(u, 1e-10);
+
+    // Inverse transform: X = -ln(U) / rate
+    output[idx] = -log(u) / params.rate;
+}
+"#.to_string()
+}
+
 //=============================================================================
 // Shader Compilation Cache
 //=============================================================================

@@ -2175,6 +2175,261 @@ pub fn gpu_normal(
     ctx.queue.submit(Some(encoder.finish()));
 }
 
+/// Generate random samples from a logistic distribution on GPU.
+///
+/// Uses the Philox PRNG and inverse transform sampling.
+///
+/// # Arguments
+///
+/// * `output` - Output buffer (GPU)
+/// * `n` - Number of samples to generate
+/// * `seed` - PRNG seed (2x u64)
+/// * `offset` - Counter offset
+/// * `loc` - Location parameter
+/// * `scale` - Scale parameter
+pub fn gpu_logistic(
+    output: &Buffer,
+    n: usize,
+    seed: [u64; 2],
+    offset: u32,
+    loc: f32,
+    scale: f32,
+) {
+    use wgpu::util::DeviceExt;
+    let ctx = WebGpuContext::get();
+
+    assert_eq!(output.device(), crate::Device::WebGpu, "Output must be on GPU");
+
+    // Create params: seed0, seed1, offset, n, loc, scale
+    let params_data: [u32; 6] = [
+        (seed[0] & 0xFFFFFFFF) as u32,
+        (seed[1] & 0xFFFFFFFF) as u32,
+        offset,
+        n as u32,
+        bytemuck::cast(loc),
+        bytemuck::cast(scale),
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("logistic params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    // Create shader
+    let shader_source = crate::backend::shaders::logistic_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("logistic shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+
+    // Create bind group layout
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("logistic bind group layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // Create pipeline layout
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("logistic pipeline layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    // Create compute pipeline
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("logistic pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Create bind group
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("logistic bind group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_gpu_buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Dispatch compute shader
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("logistic encoder"),
+    });
+
+    let workgroups = (n as u32 + 255) / 256;
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("logistic pass"),
+            timestamp_writes: None,
+        });
+
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
+/// GPU implementation of exponential distribution sampling.
+///
+/// Uses the Philox PRNG and inverse transform sampling.
+///
+/// # Arguments
+///
+/// * `output` - Output buffer (GPU)
+/// * `n` - Number of samples to generate
+/// * `seed` - PRNG seed (2x u64)
+/// * `offset` - Counter offset
+/// * `rate` - Rate parameter (λ)
+pub fn gpu_exponential(
+    output: &Buffer,
+    n: usize,
+    seed: [u64; 2],
+    offset: u32,
+    rate: f32,
+) {
+    use wgpu::util::DeviceExt;
+    let ctx = WebGpuContext::get();
+
+    assert_eq!(output.device(), crate::Device::WebGpu, "Output must be on GPU");
+
+    // Create params: seed0, seed1, offset, n, rate
+    let params_data: [u32; 5] = [
+        (seed[0] & 0xFFFFFFFF) as u32,
+        (seed[1] & 0xFFFFFFFF) as u32,
+        offset,
+        n as u32,
+        bytemuck::cast(rate),
+    ];
+
+    let params_buffer = ctx.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("exponential params"),
+        contents: bytemuck::cast_slice(&params_data),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+
+    // Create shader
+    let shader_source = crate::backend::shaders::exponential_shader();
+    let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("exponential shader"),
+        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+    });
+
+    // Create bind group layout
+    let bind_group_layout = ctx.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("exponential bind group layout"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ],
+    });
+
+    // Create pipeline layout
+    let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("exponential pipeline layout"),
+        bind_group_layouts: &[&bind_group_layout],
+        push_constant_ranges: &[],
+    });
+
+    // Create compute pipeline
+    let pipeline = ctx.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("exponential pipeline"),
+        layout: Some(&pipeline_layout),
+        module: &shader,
+        entry_point: "main",
+        compilation_options: Default::default(),
+        cache: None,
+    });
+
+    // Create bind group
+    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("exponential bind group"),
+        layout: &bind_group_layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: output.as_gpu_buffer().as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: params_buffer.as_entire_binding(),
+            },
+        ],
+    });
+
+    // Dispatch compute shader
+    let mut encoder = ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("exponential encoder"),
+    });
+
+    let workgroups = (n as u32 + 255) / 256;
+
+    {
+        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+            label: Some("exponential pass"),
+            timestamp_writes: None,
+        });
+
+        cpass.set_pipeline(&pipeline);
+        cpass.set_bind_group(0, &bind_group, &[]);
+        cpass.dispatch_workgroups(workgroups, 1, 1);
+    }
+
+    ctx.queue.submit(Some(encoder.finish()));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
