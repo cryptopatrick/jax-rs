@@ -28,6 +28,23 @@ name = "gpu_tests"
 path = "tests/gpu_tests.rs"
 required-features = ["webgpu"]
 
+[[test]]
+name = "numerical_accuracy"
+path = "tests/numerical_accuracy.rs"
+
+[[test]]
+name = "gradient_correctness"
+path = "tests/gradient_correctness.rs"
+
+[[test]]
+name = "property_tests"
+path = "tests/property_tests.rs"
+
+[[test]]
+name = "cross_backend"
+path = "tests/cross_backend.rs"
+required-features = ["webgpu"]
+
 ###############################################################################
 [features]
 default = ["webgpu"]
