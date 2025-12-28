@@ -1,8 +1,7 @@
 <h1 align="center">
   <br>
     <img 
-      src="https://github.com/cryptopatrick/factory/blob/master/img/100days/jax-rs.png" 
-      alt="Title" 
+      src="https://github.com/cryptopatrick/factory/blob/master/img/100days/jax-rs.png"
       width="200"
     />
   <br>
@@ -34,7 +33,7 @@ JAX-RS
 
 <b>Author's bio:</b> 👋😀 Hi, I'm CryptoPatrick! I'm currently enrolled as an
 Undergraduate student in Mathematics, at Chalmers & the University of Gothenburg, Sweden. <br>
-If you have any questions or need more info, then please <a href="https://discord.gg/T8EWmJZpCB">join my Discord Channel: AiMath</a>
+If you like this repo then it would make me happy if you gave it a star.
 
 ---
 
