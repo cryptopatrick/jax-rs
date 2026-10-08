@@ -1,0 +1,186 @@
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Color System - Performance Telemetry */
+  --color-primary: #0A1929;
+  --color-primary-light: #132F4C;
+  --color-accent-blue: #00B4D8;
+  --color-accent-cyan: #00F5FF;
+  --color-accent-orange: #FF6B35;
+  --color-accent-red: #E63946;
+  --color-accent-green: #06FFA5;
+  --color-accent-purple: #9D4EDD;
+
+  /* Gradients */
+  --gradient-primary: linear-gradient(135deg, #0A1929 0%, #132F4C 100%);
+  --gradient-accent: linear-gradient(90deg, #00B4D8 0%, #00F5FF 100%);
+  --gradient-warning: linear-gradient(90deg, #FF6B35 0%, #E63946 100%);
+  --gradient-success: linear-gradient(90deg, #06FFA5 0%, #00B4D8 100%);
+
+  /* Shadows */
+  --shadow-glow-blue: 0 0 20px rgba(0, 180, 216, 0.3);
+  --shadow-glow-orange: 0 0 20px rgba(255, 107, 53, 0.3);
+  --shadow-depth: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+
+@layer base {
+  body {
+    font-family: 'Rajdhani', system-ui, -apple-system, sans-serif;
+    background: var(--gradient-primary);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3 {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  code, .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Performance Bar Animation */
+@keyframes slideInFromLeft {
+  from {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(0, 180, 216, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(0, 180, 216, 0.8);
+  }
+}
+
+@keyframes race {
+  0% {
+    transform: translateX(0) scale(1);
+  }
+  2% {
+    transform: translateX(0) scale(1.1);
+  }
+  100% {
+    transform: translateX(var(--race-distance)) scale(1);
+  }
+}
+
+/* Checkered Flag Pattern */
+.checkered-flag {
+  background-image:
+    linear-gradient(45deg, #1a1a1a 25%, transparent 25%),
+    linear-gradient(-45deg, #1a1a1a 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #1a1a1a 75%),
+    linear-gradient(-45deg, transparent 75%, #1a1a1a 75%);
+  background-size: 20px 20px;
+  background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+}
+
+/* Gradient Mesh Background */
+.gradient-mesh {
+  background:
+    radial-gradient(circle at 20% 50%, rgba(0, 180, 216, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 80% 80%, rgba(157, 78, 221, 0.15) 0%, transparent 50%),
+    radial-gradient(circle at 40% 20%, rgba(6, 255, 165, 0.1) 0%, transparent 50%);
+}
+
+/* Noise Texture */
+.noise-overlay {
+  position: relative;
+}
+
+.noise-overlay::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+  opacity: 0.03;
+  pointer-events: none;
+}
+
+/* Glass morphism card */
+.glass-card {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--shadow-depth);
+}
+
+/* Animated gradient border */
+.animated-border {
+  position: relative;
+  background: rgba(10, 25, 41, 0.8);
+}
+
+.animated-border::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 2px;
+  background: linear-gradient(45deg, #00B4D8, #9D4EDD, #00F5FF, #06FFA5);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  border-radius: inherit;
+  animation: rotate-gradient 3s linear infinite;
+  opacity: 0.6;
+}
+
+@keyframes rotate-gradient {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Track perspective */
+.track-3d {
+  perspective: 1000px;
+  perspective-origin: center top;
+}
+
+.track-lane {
+  transform: rotateX(15deg);
+  transform-style: preserve-3d;
+}
+
+/* Stagger animation delays */
+.stagger-1 { animation-delay: 0.1s; }
+.stagger-2 { animation-delay: 0.2s; }
+.stagger-3 { animation-delay: 0.3s; }
+.stagger-4 { animation-delay: 0.4s; }
+
+/* Utility classes */
+.text-glow {
+  text-shadow: 0 0 10px currentColor;
+}
+
+.glow-blue {
+  box-shadow: var(--shadow-glow-blue);
+}
+
+.glow-orange {
+  box-shadow: var(--shadow-glow-orange);
+}
