@@ -1144,7 +1144,7 @@ impl Default for JVPEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Shape;
+    use crate::{DType, Shape};
 
     #[test]
     fn test_grad_simple() {

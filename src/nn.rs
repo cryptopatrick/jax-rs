@@ -167,6 +167,29 @@ pub fn softmax(x: &Array) -> Array {
     Array::from_vec(result, x.shape().clone())
 }
 
+/// Log-softmax of a slice that avoids "Softmax Collapse" (Barron et al.).
+///
+/// The standard `z - max - log(sum(exp(z - max)))` adds 1.0 (the max term) to
+/// the tiny non-max exponentials, so once the logit margin exceeds ~16.6 in
+/// fp32 the max entry rounds to exactly 0. Instead, the max entry is excluded
+/// from the sum and added back via `ln_1p`, i.e. softplus(-margin), so the
+/// result stays accurate down to exp underflow.
+fn log_softmax_slice(data: &[f32]) -> Vec<f32> {
+    if data.is_empty() {
+        return Vec::new();
+    }
+    let z_max = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let i_max = data.iter().position(|&v| v == z_max).unwrap_or(0);
+
+    // sum_{j != max} e^(z_j - z_max); every term is <= 1, so no overflow
+    let sum_exp =
+        |s: &[f32]| s.iter().map(|&v| (v - z_max).exp()).sum::<f32>();
+    let others = sum_exp(&data[..i_max]) + sum_exp(&data[i_max + 1..]);
+
+    let log_norm = others.ln_1p();
+    data.iter().map(|&v| v - z_max - log_norm).collect()
+}
+
 /// Log-softmax activation.
 ///
 /// Numerically stable implementation of log(softmax(x)).
@@ -181,15 +204,7 @@ pub fn softmax(x: &Array) -> Array {
 pub fn log_softmax(x: &Array) -> Array {
     assert_eq!(x.ndim(), 1, "log_softmax only supports 1-D arrays for now");
 
-    let data = x.to_vec();
-
-    // Subtract max for numerical stability
-    let max_val = data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    let shifted: Vec<f32> = data.iter().map(|&v| v - max_val).collect();
-    let log_sum_exp = shifted.iter().map(|&v| v.exp()).sum::<f32>().ln();
-
-    let result: Vec<f32> = shifted.iter().map(|&v| v - log_sum_exp).collect();
-    Array::from_vec(result, x.shape().clone())
+    Array::from_vec(log_softmax_slice(&x.to_vec()), x.shape().clone())
 }
 
 /// One-hot encoding.
@@ -755,7 +770,9 @@ pub fn relu6(x: &Array) -> Array {
 /// ```
 pub fn softplus(x: &Array) -> Array {
     let data = x.to_vec();
-    let result: Vec<f32> = data.iter().map(|&v| (1.0 + v.exp()).ln()).collect();
+    // max(v, 0) + log1p(e^-|v|) avoids overflow and keeps tiny values
+    let result: Vec<f32> =
+        data.iter().map(|&v| v.max(0.0) + (-v.abs()).exp().ln_1p()).collect();
     Array::from_vec(result, x.shape().clone())
 }
 
@@ -2458,6 +2475,7 @@ pub fn global_max_pool2d(x: &Array) -> Array {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use approx::assert_relative_eq;
 
     #[test]
     fn test_relu() {
@@ -2509,6 +2527,56 @@ mod tests {
         for i in 0..3 {
             assert!((log_sm_data[i] - sm_data[i].ln()).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn test_log_softmax_no_collapse() {
+        // Margin m = 18 - ln(2) is past the fp32 precision cliff (~16.6), so the
+        // standard formula rounds 1 + e^-m to 1 and returns exactly 0.0 here.
+        let x = Array::from_vec(vec![9.0, -9.0, -9.0], Shape::new(vec![3]));
+        let y = log_softmax(&x).to_vec();
+        assert_relative_eq!(
+            y[0],
+            -3.046e-8,
+            epsilon = 0.0,
+            max_relative = 1e-3
+        );
+        assert_relative_eq!(y[1], -18.0, max_relative = 1e-6);
+        assert_relative_eq!(y[2], -18.0, max_relative = 1e-6);
+
+        // Ties at the max must still normalize correctly.
+        let y =
+            log_softmax(&Array::from_vec(vec![1.0, 1.0], Shape::new(vec![2])))
+                .to_vec();
+        assert_relative_eq!(
+            y[0],
+            -std::f32::consts::LN_2,
+            max_relative = 1e-6
+        );
+        assert_relative_eq!(
+            y[1],
+            -std::f32::consts::LN_2,
+            max_relative = 1e-6
+        );
+
+        // Single element: log(1) = 0.
+        let y = log_softmax(&Array::from_vec(vec![5.0], Shape::new(vec![1])))
+            .to_vec();
+        assert_eq!(y[0], 0.0);
+    }
+
+    #[test]
+    fn test_softplus_stable() {
+        let x = Array::from_vec(vec![-30.0, 0.0, 100.0], Shape::new(vec![3]));
+        let y = softplus(&x).to_vec();
+        assert_relative_eq!(
+            y[0],
+            (-30.0f32).exp(),
+            epsilon = 0.0,
+            max_relative = 1e-5
+        );
+        assert_relative_eq!(y[1], std::f32::consts::LN_2, max_relative = 1e-6);
+        assert_relative_eq!(y[2], 100.0, max_relative = 1e-6);
     }
 
     #[test]
