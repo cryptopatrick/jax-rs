@@ -3,6 +3,7 @@ target/
 _docs-vibe/
 _wb/
 _dev/
+_improve/
 
 # Files
 .DS_Store
@@ -22,3 +23,5 @@ GAP_ANALYSIS.md
 PARITY_SUMMARY.md
 REMAIN.md
 SOMEDAY.md
+TODO.md
+scratch.md

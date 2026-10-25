@@ -122,6 +122,11 @@ pub fn uniform(key: PRNGKey, shape: Shape, dtype: DType) -> Array {
 ///
 /// ```
 /// # use jax_rs::{random::{PRNGKey, uniform_device}, Shape, DType, Device};
+/// # use jax_rs::backend::webgpu::WebGpuContext;
+/// // WebGPU must be initialized once before using `Device::WebGpu`.
+/// if pollster::block_on(WebGpuContext::init()).is_err() {
+///     return; // No GPU available
+/// }
 /// let key = PRNGKey::from_seed(42);
 /// let samples = uniform_device(key, Shape::new(vec![1000]), DType::Float32, Device::WebGpu);
 /// ```
@@ -229,6 +234,11 @@ pub fn normal(key: PRNGKey, shape: Shape, dtype: DType) -> Array {
 ///
 /// ```
 /// # use jax_rs::{random::{PRNGKey, normal_device}, Shape, DType, Device};
+/// # use jax_rs::backend::webgpu::WebGpuContext;
+/// // WebGPU must be initialized once before using `Device::WebGpu`.
+/// if pollster::block_on(WebGpuContext::init()).is_err() {
+///     return; // No GPU available
+/// }
 /// let key = PRNGKey::from_seed(42);
 /// let samples = normal_device(key, Shape::new(vec![1000]), DType::Float32, Device::WebGpu);
 /// ```
